@@ -1,0 +1,76 @@
+services:
+  nzb-relay:
+    image: ghcr.io/albinmedoc/nzb-relay:latest
+    container_name: nzb-relay
+
+    # Official command-line RAR for Linux is x64, so this image is amd64-only.
+    platform: linux/amd64
+
+    restart: unless-stopped
+
+    ports:
+      - "3001:3001"
+
+    volumes:
+      # Persist SQLite, downloaded MKVs, generated NZBs, and job logs.
+      - ./data:/data
+
+    environment:
+      # HTTP port inside the container.
+      PORT: "3001"
+
+      # Root directory for app.db, downloads, NZBs, staging files, and logs.
+      DATA_DIR: "/data"
+
+      # Structured application log level: trace, debug, info, warn, error, fatal.
+      LOG_LEVEL: "info"
+
+      # Bearer token for all endpoints except GET /v1/health.
+      # Set to a long random value in production.
+      API_KEY: "change-me"
+
+      # Free-space multiplier for NZB staging preflight.
+      # Required space is approximately source file size sum * this value.
+      STAGING_MULTIPLIER: "2.2"
+
+      # Default webhook URL for every terminal event.
+      # Leave empty only if you do not want webhook notifications.
+      WEBHOOK_URL: "https://n8n.example.com/webhook/nzb-relay"
+
+      # Optional per-event webhook overrides. Empty values fall back to WEBHOOK_URL.
+      WEBHOOK_DOWNLOAD_COMPLETED_URL: ""
+      WEBHOOK_DOWNLOAD_FAILED_URL: ""
+      WEBHOOK_NZB_COMPLETED_URL: ""
+      WEBHOOK_NZB_FAILED_URL: ""
+
+      # Optional HMAC secret for outbound webhooks.
+      # When set, requests include X-Webhook-Signature: sha256=<hex>.
+      WEBHOOK_SECRET: "change-me"
+
+      # NNTP server settings used by nyuu.
+      USENET_HOST: "news.example.com"
+      USENET_PORT: "563"
+      USENET_SSL: "true"
+      USENET_USER: "usenet-user"
+      USENET_PASS: "usenet-password"
+      USENET_RELEASE_GROUP: "alt.binaries.example"
+
+      # Naming templates. Supported tokens:
+      # {title}, {service}, {quality}, {season}, {episode}, {ext}
+      TEMPLATE_EPISODE: "{title}.s{season}e{episode}.{service}.{ext}"
+      TEMPLATE_MOVIE: "{title}.{service}.{ext}"
+      TEMPLATE_SEASON_PACK: "{title}.s{season}.{service}.{ext}"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3001/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    stop_grace_period: 30s
+
