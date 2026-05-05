@@ -15,11 +15,12 @@ FROM node:20-slim AS runtime
 WORKDIR /app
 RUN corepack enable
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg curl ca-certificates \
-  && pip install --break-system-packages svtplay-dl \
-  && npm install -g nyuu @animetosho/parpar \
+  && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg curl ca-certificates make g++ \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --break-system-packages svtplay-dl
+RUN npm install -g nyuu @animetosho/parpar \
+  && npm cache clean --force
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
