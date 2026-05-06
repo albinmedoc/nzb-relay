@@ -567,7 +567,7 @@ Substitutions: `{title}`, `{service}`, `{quality}`, `{season}` (zero-padded to 2
 | `USENET_SSL`  | no | `true` | `true` or `false`; controls whether nyuu negotiates TLS |
 | `USENET_USER` | yes | — | NNTP username |
 | `USENET_PASS` | yes | — | NNTP password |
-| `USENET_RELEASE_GROUP` | yes | — | Header newsgroup (e.g. `alt.binaries.misc`) |
+| `USENET_NEWSGROUPS` | yes | — | Comma-separated newsgroups to publish articles to (e.g. `alt.binaries.misc,alt.binaries.tv`) |
 
 ### 7.4 Webhooks
 
@@ -663,7 +663,7 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      --host <USENET_HOST> --port <USENET_PORT> \
      # pass --ssl only when USENET_SSL=true
      --user <USENET_USER> --password <USENET_PASS> \
-     --groups <USENET_RELEASE_GROUP> \
+     --groups <USENET_NEWSGROUPS> \
      --article-size 750000 \
      --meta name=<release-name> \
      --meta password=<password> \

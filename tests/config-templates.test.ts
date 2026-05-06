@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig, resolveWebhookUrl } from '../src/config.js';
+import { assertUsenetConfigured, loadConfig, resolveWebhookUrl } from '../src/config.js';
 import { renderDownloadFilename, renderSeasonPackReleaseName } from '../src/utils/templates.js';
 import { testConfig } from './helpers.js';
 
@@ -13,6 +13,38 @@ describe('config and templates', () => {
     expect(config.port).toBe(3001);
     expect(resolveWebhookUrl(config, 'download.completed')).toBe('https://example.test/all');
     expect(resolveWebhookUrl(config, 'nzb.failed')).toBe('https://example.test/nzb-failed');
+  });
+
+  it('uses USENET_NEWSGROUPS and accepts previous variable names as fallbacks', () => {
+    expect(loadConfig({ USENET_NEWSGROUPS: 'alt.binaries.tv, alt.binaries.misc' }).usenet.newsgroups).toEqual([
+      'alt.binaries.tv',
+      'alt.binaries.misc'
+    ]);
+    expect(loadConfig({ USENET_NEWSGROUP: 'alt.binaries.single' }).usenet.newsgroups).toEqual([
+      'alt.binaries.single'
+    ]);
+    expect(loadConfig({ USENET_RELEASE_GROUP: 'alt.binaries.legacy' }).usenet.newsgroups).toEqual([
+      'alt.binaries.legacy'
+    ]);
+    expect(
+      loadConfig({
+        USENET_NEWSGROUPS: 'alt.binaries.tv,alt.binaries.misc',
+        USENET_NEWSGROUP: 'alt.binaries.single',
+        USENET_RELEASE_GROUP: 'alt.binaries.legacy'
+      }).usenet.newsgroups
+    ).toEqual(['alt.binaries.tv', 'alt.binaries.misc']);
+  });
+
+  it('reports the new newsgroup variable name when Usenet config is incomplete', () => {
+    const config = loadConfig({
+      USENET_HOST: 'news.example.com',
+      USENET_USER: 'user',
+      USENET_PASS: 'pass'
+    });
+
+    expect(() => assertUsenetConfigured(config)).toThrow(
+      'missing Usenet configuration: USENET_NEWSGROUPS'
+    );
   });
 
   it('renders sanitized episode and season-pack names', () => {

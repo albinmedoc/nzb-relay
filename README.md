@@ -42,7 +42,7 @@ At minimum, set:
 - `USENET_HOST`
 - `USENET_USER`
 - `USENET_PASS`
-- `USENET_RELEASE_GROUP`
+- `USENET_NEWSGROUPS`
 - `WEBHOOK_URL` or event-specific webhook URLs, if you want notifications
 
 The service listens on `http://localhost:3001` by default. Health is available at:

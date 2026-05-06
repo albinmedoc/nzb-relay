@@ -23,7 +23,7 @@ export interface Config {
     ssl: boolean;
     user: string;
     pass: string;
-    releaseGroup: string;
+    newsgroups: string[];
   };
   webhooks: {
     defaultUrl: string;
@@ -66,7 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ssl: readBool(env.USENET_SSL, true),
       user: env.USENET_USER ?? '',
       pass: env.USENET_PASS ?? '',
-      releaseGroup: env.USENET_RELEASE_GROUP ?? ''
+      newsgroups: readNewsgroups(env)
     },
     webhooks: {
       defaultUrl: env.WEBHOOK_URL ?? '',
@@ -95,7 +95,7 @@ export function assertUsenetConfigured(config: Config): void {
     ['USENET_HOST', config.usenet.host],
     ['USENET_USER', config.usenet.user],
     ['USENET_PASS', config.usenet.pass],
-    ['USENET_RELEASE_GROUP', config.usenet.releaseGroup]
+    ['USENET_NEWSGROUPS', config.usenet.newsgroups.length > 0 ? 'configured' : '']
   ]
     .filter(([, value]) => !value)
     .map(([name]) => name);
@@ -134,3 +134,10 @@ function readBool(value: string | undefined, fallback: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
+function readNewsgroups(env: NodeJS.ProcessEnv): string[] {
+  const value = env.USENET_NEWSGROUPS ?? env.USENET_NEWSGROUP ?? env.USENET_RELEASE_GROUP ?? '';
+  return value
+    .split(',')
+    .map((newsgroup) => newsgroup.trim())
+    .filter(Boolean);
+}

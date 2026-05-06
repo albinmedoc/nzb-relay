@@ -146,7 +146,7 @@ export class NzbWorker {
         '--password',
         this.config.usenet.pass,
         '--groups',
-        this.config.usenet.releaseGroup,
+        this.config.usenet.newsgroups.join(','),
         '--article-size',
         '750000',
         '--meta',

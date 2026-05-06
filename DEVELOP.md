@@ -60,7 +60,7 @@ API_KEY=dev-secret \
 USENET_HOST=news.example.com \
 USENET_USER=user \
 USENET_PASS=pass \
-USENET_RELEASE_GROUP=alt.binaries.example \
+USENET_NEWSGROUPS=alt.binaries.example,alt.binaries.misc \
 pnpm run dev
 ```
 
@@ -104,4 +104,3 @@ data/
 ```
 
 `data/` is ignored by git.
-

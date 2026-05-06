@@ -53,7 +53,8 @@ services:
       USENET_SSL: "true"
       USENET_USER: "usenet-user"
       USENET_PASS: "usenet-password"
-      USENET_RELEASE_GROUP: "alt.binaries.example"
+      # Comma-separated. Nyuu sends this as the Newsgroups header.
+      USENET_NEWSGROUPS: "alt.binaries.example,alt.binaries.misc"
 
       # Naming templates. Supported tokens:
       # {title}, {service}, {quality}, {season}, {episode}, {ext}
@@ -73,4 +74,3 @@ services:
       start_period: 30s
 
     stop_grace_period: 30s
-
