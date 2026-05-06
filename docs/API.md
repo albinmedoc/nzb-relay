@@ -37,23 +37,26 @@ Response:
 
 ### `GET /v1/svtplay/serie/:slug`
 
-Fetches `https://www.svtplay.se/<slug>/rss.xml`, parses seasons and episodes, and probes available qualities with `svtplay-dl`.
+Fetches `https://www.svtplay.se/<slug>` and parses SVT's embedded page data into seasons and episodes.
+If the page data cannot be parsed, the service falls back to `https://www.svtplay.se/<slug>/rss.xml`.
+Available video resolutions are not probed during discovery, so `qualities` is returned as an empty array.
 
 Response:
 
 ```json
 {
   "slug": "30-grader-i-februari",
+  "link": "https://www.svtplay.se/30-grader-i-februari",
   "seasons": [
     {
-      "number": 1,
+      "season": 1,
       "episodes": [
         {
-          "url": "https://www.svtplay.se/video/...",
-          "title": "Avsnitt 1",
-          "season": 1,
           "episode": 1,
-          "qualities": ["1080", "720", "540"]
+          "title": "Avsnitt 1",
+          "description": "Del 1 av 10. ...",
+          "link": "https://www.svtplay.se/video/...",
+          "qualities": []
         }
       ]
     }
@@ -64,8 +67,8 @@ Response:
 Status codes:
 
 - `200` success
-- `404` feed not found
-- `502` RSS fetch, parse, or quality probe failed
+- `404` series not found
+- `502` SVT discovery fetch or parse failed
 
 ## Downloads
 
@@ -403,4 +406,3 @@ Failure `errorCode` values currently used:
 - `interrupted_by_restart`
 - `child_exit_nonzero`
 - `unknown`
-

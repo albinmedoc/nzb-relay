@@ -77,35 +77,34 @@ A discovery endpoint is mounted at `GET /<service>/serie/:slug` and returns the 
 
 Each service implementation is responsible for translating its provider's identifiers into stable episode URLs that can be passed verbatim to `POST /downloads`.
 
-`:slug` is passed through verbatim to the upstream provider's URL pattern. The router URL-decodes it; the implementation re-encodes if needed for the outgoing HTTP request. No whitelist or sanitisation — invalid slugs surface as `404` from the upstream feed.
+`:slug` is passed through verbatim to the upstream provider's URL pattern. The router URL-decodes it; the implementation re-encodes if needed for the outgoing HTTP request. No whitelist or sanitisation — invalid slugs surface as `404` from the upstream provider.
 
 #### `GET /svtplay/serie/:slug`
-Parses `https://www.svtplay.se/<slug>/rss.xml` and returns the show's seasons + episodes with available qualities. Live-fetched per request; intentionally not cached.
+Parses SVT's embedded page data from `https://www.svtplay.se/<slug>` and returns the show's seasons + episodes. If page data cannot be parsed, falls back to `https://www.svtplay.se/<slug>/rss.xml`. Live-fetched per request; intentionally not cached. Discovery does not probe available video resolutions, so `qualities` is returned as an empty array.
 
 - **200**:
   ```json
   {
     "slug": "30-grader-i-februari",
+    "link": "https://www.svtplay.se/30-grader-i-februari",
     "seasons": [
       {
-        "number": 1,
+        "season": 1,
         "episodes": [
           {
-            "url": "https://www.svtplay.se/video/.../...",
-            "title": "Avsnitt 1",
-            "season": 1,
             "episode": 1,
-            "qualities": ["1080", "720", "540"]
+            "title": "Avsnitt 1",
+            "description": "Del 1 av 10. ...",
+            "link": "https://www.svtplay.se/video/.../...",
+            "qualities": []
           }
         ]
       }
     ]
   }
   ```
-- **404** if SVT returns no feed for the slug.
-- **502** if RSS or quality probe fails.
-
-> Note: probing each episode for qualities is slow (one `svtplay-dl` invocation per episode). Acceptable for an orchestrator that polls infrequently; not a request to issue from a UI.
+- **404** if SVT returns no series for the slug.
+- **502** if SVT discovery fetch or parsing fails.
 
 ### 3.3 Downloads
 
