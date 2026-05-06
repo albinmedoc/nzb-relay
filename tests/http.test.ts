@@ -52,6 +52,53 @@ describe('http api', () => {
     });
   });
 
+  it('populates SVT discovery qualities by default and supports opt-out and fast mode', async () => {
+    const calls: Array<{
+      slug: string;
+      populateQualities: boolean | undefined;
+      fastQualities: boolean | undefined;
+    }> = [];
+    const appWithDiscovery = createTestApp(db, config, undefined, {
+      async fetchSerie(slug, options) {
+        calls.push({
+          slug,
+          populateQualities: options?.populateQualities,
+          fastQualities: options?.fastQualities
+        });
+        return {
+          slug,
+          name: 'Serie',
+          link: `https://www.svtplay.se/${slug}`,
+          seasons: []
+        };
+      }
+    });
+
+    const defaultResponse = await appWithDiscovery.request('/v1/svtplay/serie/test-serie', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    const disabledResponse = await appWithDiscovery.request('/v1/svtplay/serie/test-serie?qualities=false', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    const fastResponse = await appWithDiscovery.request('/v1/svtplay/serie/test-serie?fast=true', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    const disabledFastResponse = await appWithDiscovery.request('/v1/svtplay/serie/test-serie?qualities=false&fast=true', {
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(defaultResponse.status).toBe(200);
+    expect(disabledResponse.status).toBe(200);
+    expect(fastResponse.status).toBe(200);
+    expect(disabledFastResponse.status).toBe(200);
+    expect(calls).toEqual([
+      { slug: 'test-serie', populateQualities: true, fastQualities: false },
+      { slug: 'test-serie', populateQualities: false, fastQualities: false },
+      { slug: 'test-serie', populateQualities: true, fastQualities: true },
+      { slug: 'test-serie', populateQualities: false, fastQualities: false }
+    ]);
+  });
+
   it('validates partial episode metadata before queueing downloads', async () => {
     const response = await app.request('/v1/downloads', {
       method: 'POST',

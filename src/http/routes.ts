@@ -21,7 +21,7 @@ import {
   markFileDeleted
 } from '../db/repository.js';
 import type { FileRow, NzbRow } from '../types.js';
-import { fetchSvtSerie } from '../discovery/svtplay.js';
+import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
 import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
 import {
@@ -41,14 +41,25 @@ export interface WorkerControllers {
   };
 }
 
+export interface SvtDiscovery {
+  fetchSerie(slug: string, options?: SvtSerieFetchOptions): Promise<SvtSerieResponse | null>;
+}
+
 interface CreateAppDeps {
   db: AppDatabase;
   config: Config;
   logger: Logger;
   workers?: WorkerControllers;
+  svtDiscovery?: SvtDiscovery;
 }
 
-export function createApp({ db, config, logger, workers = {} }: CreateAppDeps): Hono {
+export function createApp({
+  db,
+  config,
+  logger,
+  workers = {},
+  svtDiscovery = { fetchSerie: fetchSvtSerie }
+}: CreateAppDeps): Hono {
   const app = new Hono();
   app.use('*', requestLoggingMiddleware(logger));
 
@@ -58,9 +69,15 @@ export function createApp({ db, config, logger, workers = {} }: CreateAppDeps): 
 
   v1.get('/svtplay/serie/:slug', async (c) => {
     try {
-      const result = await fetchSvtSerie(c.req.param('slug'));
+      const populateQualities = c.req.query('qualities')?.toLowerCase() !== 'false';
+      const fastQualities = populateQualities && c.req.query('fast')?.toLowerCase() === 'true';
+      const result = await svtDiscovery.fetchSerie(c.req.param('slug'), {
+        populateQualities,
+        fastQualities,
+        logger
+      });
       if (!result) {
-        return errorResponse(c, 404, 'not_found', 'series feed not found');
+        return errorResponse(c, 404, 'not_found', 'series not found');
       }
       return c.json(result);
     } catch (error) {

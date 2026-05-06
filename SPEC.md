@@ -80,7 +80,7 @@ Each service implementation is responsible for translating its provider's identi
 `:slug` is passed through verbatim to the upstream provider's URL pattern. The router URL-decodes it; the implementation re-encodes if needed for the outgoing HTTP request. No whitelist or sanitisation — invalid slugs surface as `404` from the upstream provider.
 
 #### `GET /svtplay/serie/:slug`
-Parses SVT's embedded page data from `https://www.svtplay.se/<slug>` and returns the show's seasons + episodes. If page data cannot be parsed, falls back to `https://www.svtplay.se/<slug>/rss.xml`. Live-fetched per request; intentionally not cached. Discovery does not probe available video resolutions, so `qualities` is returned as an empty array.
+Parses SVT's embedded page data from `https://www.svtplay.se/<slug>` and returns the show's seasons + episodes. If page data cannot be parsed, falls back to `https://www.svtplay.se/<slug>/rss.xml`. Live-fetched per request; intentionally not cached. By default, discovery runs `svtplay-dl --list-quality` for each episode with bounded concurrency and returns available resolution heights in `qualities`. Use `?qualities=false` to skip probing and return empty quality arrays. Use `?fast=true` to probe only the first episode in each season and reuse those qualities for the rest of that season.
 
 - **200**:
   ```json
@@ -97,7 +97,7 @@ Parses SVT's embedded page data from `https://www.svtplay.se/<slug>` and returns
             "title": "Avsnitt 1",
             "description": "Del 1 av 10. ...",
             "link": "https://www.svtplay.se/video/.../...",
-            "qualities": []
+            "qualities": ["1080", "720", "540"]
           }
         ]
       }

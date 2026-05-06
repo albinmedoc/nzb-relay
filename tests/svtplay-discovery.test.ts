@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSvtSeriePageHtml, parseSvtSerieXml } from '../src/discovery/svtplay.js';
+import { parseSvtSeriePageHtml, parseSvtSerieXml, parseSvtplayDlQualities } from '../src/discovery/svtplay.js';
 
 describe('svtplay discovery', () => {
   it('reads seasons and episodes from SVT page data', async () => {
@@ -16,7 +16,8 @@ describe('svtplay discovery', () => {
         ),
         relatedModule([pageItem(99, 99)])
       ]),
-      'mysteriet-pa-greveholm'
+      'mysteriet-pa-greveholm',
+      async () => ['1080', '720']
     );
 
     expect(result?.name).toBe('Mysteriet på Greveholm');
@@ -27,13 +28,62 @@ describe('svtplay discovery', () => {
     expect(result?.seasons[0]?.episodes[11]).toMatchObject({
       episode: 12,
       title: '12. Episode 12',
-      description: 'Del 1 av 24.'
+      description: 'Del 1 av 24.',
+      qualities: ['1080', '720']
     });
     expect(result?.seasons[0]?.episodes[13]).toMatchObject({
       episode: 14,
       title: '14. Episode 14',
       description: 'Del 1 av 24.'
     });
+  });
+
+  it('probes page-data qualities concurrently with a bounded limit', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const result = await parseSvtSeriePageHtml(
+      pageData('/mysteriet-pa-greveholm', [
+        seasonModule(1, range(1, 6).map((episode) => pageItem(episode, episode)))
+      ]),
+      'mysteriet-pa-greveholm',
+      async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await delay(10);
+        active -= 1;
+        return ['1080'];
+      },
+      undefined,
+      3
+    );
+
+    expect(result?.seasons[0]?.episodes).toHaveLength(6);
+    expect(maxActive).toBe(3);
+  });
+
+  it('can reuse first-episode qualities across each page-data season', async () => {
+    const probedUrls: string[] = [];
+    const result = await parseSvtSeriePageHtml(
+      pageData('/test-serie', [
+        seasonModule(1, [pageItemForSeason(1, 3), pageItemForSeason(1, 1), pageItemForSeason(1, 2)]),
+        seasonModule(2, [pageItemForSeason(2, 2), pageItemForSeason(2, 1)])
+      ]),
+      'test-serie',
+      async (url) => {
+        probedUrls.push(url);
+        return url.endsWith('/s1e1') ? ['720'] : ['1080'];
+      },
+      undefined,
+      4,
+      true
+    );
+
+    expect(probedUrls).toEqual([
+      'https://www.svtplay.se/video/test/test-serie/s1e1',
+      'https://www.svtplay.se/video/test/test-serie/s2e1'
+    ]);
+    expect(result?.seasons[0]?.episodes.map((episode) => episode.qualities)).toEqual([['720'], ['720'], ['720']]);
+    expect(result?.seasons[1]?.episodes.map((episode) => episode.qualities)).toEqual([['1080'], ['1080']]);
   });
 
   it('infers seasons from newest-first RSS episode runs', async () => {
@@ -175,6 +225,19 @@ describe('svtplay discovery', () => {
       }
     ]);
   });
+
+  it('parses resolution heights from svtplay-dl quality output', () => {
+    expect(
+      parseSvtplayDlQualities(`
+INFO: Quality:  Method:  Codec:  Resolution:  Language:  Role:
+INFO: 3384      hls      h264    1920x1080    sv         main
+INFO: 2329      hls      h264    1280x720     sv         main
+INFO: 1555      hls      h264    960x540      sv         main
+INFO: 1040      hls      h264    640x360      sv         main
+INFO: 550       hls      h264    416x234      sv         main
+`)
+    ).toEqual(['1080', '720', '540', '360', '234']);
+  });
 });
 
 interface TestRssItem {
@@ -209,6 +272,10 @@ function range(from: number, to: number): number[] {
     values.push(value);
   }
   return values;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface TestPageModule {
@@ -320,6 +387,12 @@ function pageItem(episode: number, describedEpisode: number): TestPageItem {
       }
     }
   };
+}
+
+function pageItemForSeason(season: number, episode: number): TestPageItem {
+  const testItem = pageItem(episode, episode);
+  testItem.item.urls.svtplay = `/video/test/test-serie/s${season}e${episode}`;
+  return testItem;
 }
 
 function rss(items: TestRssItem[]): string {

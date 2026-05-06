@@ -39,7 +39,9 @@ Response:
 
 Fetches `https://www.svtplay.se/<slug>` and parses SVT's embedded page data into seasons and episodes.
 If the page data cannot be parsed, the service falls back to `https://www.svtplay.se/<slug>/rss.xml`.
-Available video resolutions are not probed during discovery, so `qualities` is returned as an empty array.
+By default, discovery runs `svtplay-dl --list-quality` for each episode, with bounded concurrency, and returns available resolution heights in `qualities`.
+Use `?qualities=false` to skip probing and return empty quality arrays.
+Use `?fast=true` to probe only the first episode in each season and reuse those qualities for the rest of that season.
 
 Response:
 
@@ -57,7 +59,7 @@ Response:
           "title": "Avsnitt 1",
           "description": "Del 1 av 10. ...",
           "link": "https://www.svtplay.se/video/...",
-          "qualities": []
+          "qualities": ["1080", "720", "540"]
         }
       ]
     }

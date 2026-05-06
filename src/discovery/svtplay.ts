@@ -1,7 +1,11 @@
+import { spawn } from 'node:child_process';
 import { XMLParser } from 'fast-xml-parser';
+import type { Logger } from 'pino';
 import { fetch } from 'undici';
 
 const SVT_BASE_URL = 'https://www.svtplay.se';
+const QUALITY_PROBE_TIMEOUT_MS = 60_000;
+const DEFAULT_QUALITY_PROBE_CONCURRENCY = 4;
 
 export interface SvtEpisode {
   episode: number;
@@ -22,7 +26,24 @@ export interface SvtSerieResponse {
 }
 
 type FeedOrder = 'asc' | 'desc';
-type QualityProbe = (url: string) => Promise<string[]>;
+export type QualityProbe = (url: string) => Promise<string[]>;
+
+export interface SvtSerieFetchOptions {
+  populateQualities?: boolean;
+  fastQualities?: boolean;
+  qualityProbe?: QualityProbe;
+  qualityProbeConcurrency?: number;
+  logger?: Logger;
+}
+
+interface QualityProbeContext {
+  slug: string;
+  source: 'page' | 'rss';
+  season: number;
+  episode: number;
+  title: string;
+  link: string;
+}
 
 interface ParsedRssEpisode {
   link: string;
@@ -38,15 +59,58 @@ interface SeasonRun {
   episodes: ParsedRssEpisode[];
 }
 
-export async function fetchSvtSerie(slug: string): Promise<SvtSerieResponse | null> {
+interface EpisodeWithoutQualities {
+  episode: number;
+  title: string;
+  description: string;
+  link: string;
+  qualityContext: QualityProbeContext;
+}
+
+export async function fetchSvtSerie(
+  slug: string,
+  options: SvtSerieFetchOptions = {}
+): Promise<SvtSerieResponse | null> {
   const encodedSlug = encodeURIComponent(slug).replace(/%2F/g, '/');
+  const populateQualities = options.populateQualities !== false;
+  const fastQualities = populateQualities && options.fastQualities === true;
+  const qualityProbe = resolveQualityProbe(options);
+  const qualityProbeConcurrency = resolveQualityProbeConcurrency(options.qualityProbeConcurrency);
+  const logger = options.logger;
+  logger?.info(
+    {
+      event: 'svt.discovery.started',
+      slug,
+      populateQualities,
+      fastQualities,
+      qualityProbeConcurrency
+    },
+    'SVT discovery started'
+  );
   const pageResponse = await fetch(`${SVT_BASE_URL}/${encodedSlug}`, {
     signal: AbortSignal.timeout(30_000)
   });
 
   if (pageResponse.ok) {
-    const pageResult = await parseSvtSeriePageHtml(await pageResponse.text(), slug);
+    const pageResult = await parseSvtSeriePageHtml(
+      await pageResponse.text(),
+      slug,
+      qualityProbe,
+      logger,
+      qualityProbeConcurrency,
+      fastQualities
+    );
     if (pageResult) {
+      logger?.info(
+        {
+          event: 'svt.discovery.completed',
+          slug,
+          source: 'page',
+          seasonCount: pageResult.seasons.length,
+          episodeCount: countEpisodes(pageResult)
+        },
+        'SVT discovery completed'
+      );
       return pageResult;
     }
   }
@@ -62,13 +126,29 @@ export async function fetchSvtSerie(slug: string): Promise<SvtSerieResponse | nu
   }
 
   const xml = await response.text();
-  return parseSvtSerieXml(xml, slug);
+  const rssResult = await parseSvtSerieXml(xml, slug, qualityProbe, logger, qualityProbeConcurrency, fastQualities);
+  if (rssResult) {
+    logger?.info(
+      {
+        event: 'svt.discovery.completed',
+        slug,
+        source: 'rss',
+        seasonCount: rssResult.seasons.length,
+        episodeCount: countEpisodes(rssResult)
+      },
+      'SVT discovery completed'
+    );
+  }
+  return rssResult;
 }
 
 export async function parseSvtSeriePageHtml(
   html: string,
   slug: string,
-  qualityProbe: QualityProbe = async () => []
+  qualityProbe: QualityProbe = async () => [],
+  logger?: Logger,
+  qualityProbeConcurrency = DEFAULT_QUALITY_PROBE_CONCURRENCY,
+  fastQualities = false
 ): Promise<SvtSerieResponse | null> {
   const detailsPage = extractDetailsPage(html);
   if (!detailsPage) {
@@ -77,7 +157,14 @@ export async function parseSvtSeriePageHtml(
 
   const serieLink =
     absoluteSvtUrl(firstText(getPath(detailsPage, ['item', 'urls', 'svtplay']))) || `${SVT_BASE_URL}/${slug}`;
-  const seasons = await parsePageSeasons(detailsPage, qualityProbe);
+  const seasons = await parsePageSeasons(
+    detailsPage,
+    slug,
+    qualityProbe,
+    logger,
+    resolveQualityProbeConcurrency(qualityProbeConcurrency),
+    fastQualities
+  );
   if (seasons.length === 0) {
     return null;
   }
@@ -93,7 +180,10 @@ export async function parseSvtSeriePageHtml(
 export async function parseSvtSerieXml(
   xml: string,
   slug: string,
-  qualityProbe: QualityProbe = async () => []
+  qualityProbe: QualityProbe = async () => [],
+  logger?: Logger,
+  qualityProbeConcurrency = DEFAULT_QUALITY_PROBE_CONCURRENCY,
+  fastQualities = false
 ): Promise<SvtSerieResponse | null> {
   const parser = new XMLParser({ ignoreAttributes: false, trimValues: true });
   const parsed = parser.parse(xml) as Record<string, unknown>;
@@ -133,17 +223,35 @@ export async function parseSvtSerieXml(
   const order = inferFeedOrder(parsedEpisodes);
   const runs = collectSeasonRuns(parsedEpisodes, order);
   const seasonNumbers = inferSeasonNumbers(runs, order);
+  const concurrency = resolveQualityProbeConcurrency(qualityProbeConcurrency);
   const bySeason = new Map<number, SvtEpisode[]>();
   for (const [runIndex, run] of runs.entries()) {
     const season = seasonNumbers[runIndex] ?? 1;
+    const episodesWithoutQualities: EpisodeWithoutQualities[] = [];
     for (const parsedEpisode of run.episodes) {
-      const episode: SvtEpisode = {
+      episodesWithoutQualities.push({
         episode: parsedEpisode.episode,
         title: parsedEpisode.title,
         description: parsedEpisode.description,
         link: parsedEpisode.link,
-        qualities: await qualityProbe(parsedEpisode.link)
-      };
+        qualityContext: {
+          slug,
+          source: 'rss',
+          season,
+          episode: parsedEpisode.episode,
+          title: parsedEpisode.title,
+          link: parsedEpisode.link
+        }
+      });
+    }
+
+    for (const episode of await populateEpisodeQualities(
+      episodesWithoutQualities,
+      qualityProbe,
+      logger,
+      concurrency,
+      fastQualities
+    )) {
       const group = bySeason.get(season) ?? [];
       group.push(episode);
       bySeason.set(season, group);
@@ -179,6 +287,114 @@ function extractEpisode(title: string, url: string): number | null {
   );
 }
 
+function resolveQualityProbe(options: SvtSerieFetchOptions): QualityProbe {
+  if (options.populateQualities === false) {
+    return emptyQualityProbe;
+  }
+  return memoizeQualityProbe(options.qualityProbe ?? probeSvtplayDlQualities);
+}
+
+function resolveQualityProbeConcurrency(value: number | undefined): number {
+  if (value == null) {
+    return DEFAULT_QUALITY_PROBE_CONCURRENCY;
+  }
+  if (!Number.isFinite(value)) {
+    return DEFAULT_QUALITY_PROBE_CONCURRENCY;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+async function emptyQualityProbe(): Promise<string[]> {
+  return [];
+}
+
+function memoizeQualityProbe(probe: QualityProbe): QualityProbe {
+  const cache = new Map<string, Promise<string[]>>();
+  return (url) => {
+    const cached = cache.get(url);
+    if (cached) {
+      return cached;
+    }
+    const result = probe(url);
+    cache.set(url, result);
+    return result;
+  };
+}
+
+function probeSvtplayDlQualities(url: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    let settled = false;
+    let timeout: NodeJS.Timeout | null = null;
+
+    const settle = (error: Error | null, qualities?: string[]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(qualities ?? []);
+    };
+
+    const child = spawn('svtplay-dl', ['--list-quality', url], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    timeout = setTimeout(() => {
+      settle(new Error('svtplay-dl quality probe timed out'));
+      child.kill('SIGKILL');
+    }, QUALITY_PROBE_TIMEOUT_MS);
+
+    child.stdout?.on('data', (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr?.on('data', (chunk) => {
+      output += String(chunk);
+    });
+    child.on('error', (error) => {
+      settle(error);
+    });
+    child.on('close', (code) => {
+      if (code !== 0) {
+        settle(new Error(`svtplay-dl quality probe exited with code ${code}: ${truncateOneLine(output)}`));
+        return;
+      }
+
+      const qualities = parseSvtplayDlQualities(output);
+      if (qualities.length === 0) {
+        settle(new Error(`svtplay-dl quality probe returned no qualities: ${truncateOneLine(output)}`));
+        return;
+      }
+      settle(null, qualities);
+    });
+  });
+}
+
+export function parseSvtplayDlQualities(output: string): string[] {
+  const heights = new Set<string>();
+  for (const match of output.matchAll(/\b\d{3,4}x(\d{3,4})\b/g)) {
+    if (match[1]) {
+      heights.add(match[1]);
+    }
+  }
+
+  if (heights.size === 0) {
+    for (const match of output.matchAll(/\b([1-9]\d{2,3})p?\b/g)) {
+      if (match[1]) {
+        heights.add(match[1]);
+      }
+    }
+  }
+
+  return [...heights].sort((a, b) => Number(b) - Number(a));
+}
+
 function extractPageSerieName(detailsPage: Record<string, unknown>): string {
   return firstText(
     getPath(detailsPage, ['item', 'parent', 'name']),
@@ -204,7 +420,11 @@ function humanizeSlug(slug: string): string {
 
 async function parsePageSeasons(
   detailsPage: Record<string, unknown>,
-  qualityProbe: QualityProbe
+  slug: string,
+  qualityProbe: QualityProbe,
+  logger: Logger | undefined,
+  qualityProbeConcurrency: number,
+  fastQualities: boolean
 ): Promise<SvtSerieResponse['seasons']> {
   const seasons: SvtSerieResponse['seasons'] = [];
   let implicitSeason = 1;
@@ -220,7 +440,7 @@ async function parsePageSeasons(
     const season = explicitSeason ?? implicitSeason;
     implicitSeason = Math.max(implicitSeason + 1, season + 1);
 
-    const episodes: SvtEpisode[] = [];
+    const episodesWithoutQualities: EpisodeWithoutQualities[] = [];
     const seenLinks = new Set<string>();
     for (const [index, rawItem] of asArray(selection.items).entries()) {
       const item = asRecord(rawItem);
@@ -237,14 +457,30 @@ async function parsePageSeasons(
       seenLinks.add(link);
 
       const title = firstText(item.heading, getPath(item, ['item', 'name']), item.title) || `Avsnitt ${index + 1}`;
-      episodes.push({
-        episode: extractEpisode(title, link) ?? extractTeaserIndex(item) ?? index + 1,
+      const episodeNumber = extractEpisode(title, link) ?? extractTeaserIndex(item) ?? index + 1;
+      episodesWithoutQualities.push({
+        episode: episodeNumber,
         title,
         description: firstText(item.description),
         link,
-        qualities: await qualityProbe(link)
+        qualityContext: {
+          slug,
+          source: 'page',
+          season,
+          episode: episodeNumber,
+          title,
+          link
+        }
       });
     }
+
+    const episodes = await populateEpisodeQualities(
+      episodesWithoutQualities,
+      qualityProbe,
+      logger,
+      qualityProbeConcurrency,
+      fastQualities
+    );
 
     if (episodes.length > 0) {
       seasons.push({
@@ -255,6 +491,135 @@ async function parsePageSeasons(
   }
 
   return seasons.sort((a, b) => a.season - b.season);
+}
+
+async function populateEpisodeQualities(
+  episodes: EpisodeWithoutQualities[],
+  qualityProbe: QualityProbe,
+  logger: Logger | undefined,
+  concurrency: number,
+  fastQualities: boolean
+): Promise<SvtEpisode[]> {
+  if (fastQualities) {
+    return populateEpisodeQualitiesFromFirstEpisode(episodes, qualityProbe, logger);
+  }
+
+  const populated = await mapConcurrent(episodes, concurrency, async (episode) => ({
+    episode: episode.episode,
+    title: episode.title,
+    description: episode.description,
+    link: episode.link,
+    qualities: await probeEpisodeQualities(qualityProbe, logger, episode.qualityContext)
+  }));
+
+  return populated.sort((a, b) => a.episode - b.episode);
+}
+
+async function populateEpisodeQualitiesFromFirstEpisode(
+  episodes: EpisodeWithoutQualities[],
+  qualityProbe: QualityProbe,
+  logger: Logger | undefined
+): Promise<SvtEpisode[]> {
+  const sampleEpisode = selectFirstEpisode(episodes);
+  const sampledQualities = sampleEpisode
+    ? await probeEpisodeQualities(qualityProbe, logger, sampleEpisode.qualityContext)
+    : [];
+
+  const populated = episodes.map((episode) => {
+    if (sampleEpisode && episode !== sampleEpisode) {
+      logger?.info(
+        {
+          event: 'svt.episode.qualities.reused',
+          ...episode.qualityContext,
+          sourceEpisode: sampleEpisode.episode,
+          sourceLink: sampleEpisode.link,
+          qualityCount: sampledQualities.length,
+          qualities: sampledQualities
+        },
+        'SVT episode qualities reused from season sample'
+      );
+    }
+
+    return {
+      episode: episode.episode,
+      title: episode.title,
+      description: episode.description,
+      link: episode.link,
+      qualities: [...sampledQualities]
+    };
+  });
+
+  return populated.sort((a, b) => a.episode - b.episode);
+}
+
+function selectFirstEpisode(episodes: EpisodeWithoutQualities[]): EpisodeWithoutQualities | undefined {
+  return episodes.reduce<EpisodeWithoutQualities | undefined>((selected, episode) => {
+    if (!selected || episode.episode < selected.episode) {
+      return episode;
+    }
+    return selected;
+  }, undefined);
+}
+
+async function mapConcurrent<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, values.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) {
+        return;
+      }
+      results[index] = await mapper(values[index]!, index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+async function probeEpisodeQualities(
+  qualityProbe: QualityProbe,
+  logger: Logger | undefined,
+  context: QualityProbeContext
+): Promise<string[]> {
+  const startedAt = Date.now();
+  logger?.info({ event: 'svt.episode.qualities.started', ...context }, 'SVT episode quality probe started');
+  try {
+    const qualities = await qualityProbe(context.link);
+    logger?.info(
+      {
+        event: 'svt.episode.qualities.completed',
+        ...context,
+        qualityCount: qualities.length,
+        qualities,
+        durationMs: Date.now() - startedAt
+      },
+      'SVT episode quality probe completed'
+    );
+    return qualities;
+  } catch (error) {
+    logger?.warn(
+      {
+        event: 'svt.episode.qualities.failed',
+        ...context,
+        error,
+        durationMs: Date.now() - startedAt
+      },
+      'SVT episode quality probe failed'
+    );
+    throw error;
+  }
+}
+
+function countEpisodes(response: SvtSerieResponse): number {
+  return response.seasons.reduce((count, season) => count + season.episodes.length, 0);
 }
 
 function extractDetailsPage(html: string): Record<string, unknown> | null {
@@ -585,4 +950,8 @@ function readPositiveInteger(value: unknown): number | null {
   const parsed =
     typeof value === 'number' ? value : typeof value === 'string' ? Number.parseInt(value, 10) : Number.NaN;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function truncateOneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 200) || 'no output';
 }
