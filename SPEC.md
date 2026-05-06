@@ -86,6 +86,7 @@ Parses SVT's embedded page data from `https://www.svtplay.se/<slug>` and returns
   ```json
   {
     "slug": "30-grader-i-februari",
+    "name": "30 grader i februari",
     "link": "https://www.svtplay.se/30-grader-i-februari",
     "seasons": [
       {

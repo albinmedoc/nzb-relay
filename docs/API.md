@@ -46,6 +46,7 @@ Response:
 ```json
 {
   "slug": "30-grader-i-februari",
+  "name": "30 grader i februari",
   "link": "https://www.svtplay.se/30-grader-i-februari",
   "seasons": [
     {

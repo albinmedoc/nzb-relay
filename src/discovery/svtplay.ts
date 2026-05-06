@@ -13,6 +13,7 @@ export interface SvtEpisode {
 
 export interface SvtSerieResponse {
   slug: string;
+  name: string;
   link: string;
   seasons: Array<{
     season: number;
@@ -83,6 +84,7 @@ export async function parseSvtSeriePageHtml(
 
   return {
     slug,
+    name: extractPageSerieName(detailsPage) || humanizeSlug(slug),
     link: serieLink,
     seasons
   };
@@ -97,6 +99,7 @@ export async function parseSvtSerieXml(
   const parsed = parser.parse(xml) as Record<string, unknown>;
   const channel = getPath<Record<string, unknown>>(parsed, ['rss', 'channel']);
   const rawItems = asArray(channel?.item);
+  const serieName = extractRssSerieName(textValue(channel?.title)) || humanizeSlug(slug);
   const serieLink = textValue(channel?.link) || `https://www.svtplay.se/${slug}`;
 
   if (rawItems.length === 0) {
@@ -149,6 +152,7 @@ export async function parseSvtSerieXml(
 
   return {
     slug,
+    name: serieName,
     link: serieLink,
     seasons: [...bySeason.entries()]
       .sort(([a], [b]) => a - b)
@@ -173,6 +177,29 @@ function extractEpisode(title: string, url: string): number | null {
     extractNumber(title, /^\s*(\d+)\.\s+/) ??
     extractNumber(url, /\/avsnitt-(\d+)\b/i)
   );
+}
+
+function extractPageSerieName(detailsPage: Record<string, unknown>): string {
+  return firstText(
+    getPath(detailsPage, ['item', 'parent', 'name']),
+    getPath(detailsPage, ['item', 'name']),
+    getPath(detailsPage, ['details', 'heading']),
+    getPath(detailsPage, ['analytics', 'json', 'title'])
+  );
+}
+
+function extractRssSerieName(title: string): string {
+  return title.replace(/^SVT Play\s*-\s*/i, '').trim();
+}
+
+function humanizeSlug(slug: string): string {
+  return slug
+    .split('/')
+    .at(-1)!
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 async function parsePageSeasons(

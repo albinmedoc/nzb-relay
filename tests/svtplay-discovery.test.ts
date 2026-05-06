@@ -19,6 +19,7 @@ describe('svtplay discovery', () => {
       'mysteriet-pa-greveholm'
     );
 
+    expect(result?.name).toBe('Mysteriet på Greveholm');
     expect(result?.link).toBe('https://www.svtplay.se/mysteriet-pa-greveholm');
     expect(result?.seasons).toHaveLength(1);
     expect(result?.seasons[0]?.season).toBe(1);
@@ -49,6 +50,7 @@ describe('svtplay discovery', () => {
 
     expect(result).toEqual({
       slug: 'innan-vi-dor',
+      name: 'Innan vi dör',
       link: 'https://www.svtplay.se/innan-vi-dor',
       seasons: [
         {
@@ -249,6 +251,9 @@ function pageData(link: string, modules: TestPageModule[]): string {
       data: JSON.stringify({
         detailsPageByPath: {
           item: {
+            parent: {
+              name: 'Mysteriet på Greveholm'
+            },
             urls: {
               svtplay: link
             }
@@ -321,7 +326,7 @@ function rss(items: TestRssItem[]): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
   <channel>
-    <title>SVT Play - Test</title>
+    <title>SVT Play - Innan vi dör</title>
     <link>https://www.svtplay.se/innan-vi-dor</link>
     ${items
       .map(
