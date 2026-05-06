@@ -107,7 +107,7 @@ export class DownloadWorker {
       logStream.write(`starting svtplay-dl for ${row.url}\n`);
       const result = await runLoggedProcess({
         command: 'svtplay-dl',
-        args: [`--resolution=${row.quality}`, '--remux', `--output=${fileMediaPath(this.config, row)}`, row.url],
+        args: buildSvtplayDownloadArgs(this.config, row),
         logStream,
         signal: controller.signal,
         logger: this.logger,
@@ -152,4 +152,15 @@ export class DownloadWorker {
       await new Promise<void>((resolve) => logStream.end(resolve));
     }
   }
+}
+
+export function buildSvtplayDownloadArgs(config: Config, row: FileRow): string[] {
+  return [
+    `--resolution=${row.quality}`,
+    '--output-format=mkv',
+    '-M',
+    '--all-subtitles',
+    `--output=${fileMediaPath(config, row)}`,
+    row.url
+  ];
 }

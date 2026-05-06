@@ -649,11 +649,14 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
    ```
    svtplay-dl \
      --resolution=<quality> \
-     --remux \
+     --output-format=mkv \
+     -M \
+     --all-subtitles \
      --output=<DATA_DIR>/downloads/<fileId>/<filename>.mkv \
      <url>
    ```
-   - `--remux` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
+   - `--output-format=mkv` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
+   - `-M --all-subtitles` merges every available subtitle track into the mkv.
    - `--output` is a fully-qualified path; svtplay-dl will not append its own naming.
 4. On exit code 0: update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).
 5. On non-zero exit, signal-kill, or spawn error: update to `status='failed'`, set `error` to the last line of stderr (truncated to 200 chars), set `errorCode` per §6.1 (typically `child_exit_nonzero`; use `insufficient_space` if the worker detects `ENOSPC` while writing the mkv), queue `download.failed`, run §5.4 cleanup.
@@ -770,7 +773,7 @@ See §5.6.
 Reference deployment uses `node:20-slim` as the base image. Required additions:
 
 - **`python3` + `pip`** via `apt-get install -y python3 python3-pip`, then `pip install --break-system-packages svtplay-dl` (Debian 12+ requires the flag).
-- **`ffmpeg`** via `apt-get install -y ffmpeg` (needed by `svtplay-dl --remux`).
+- **`ffmpeg`** via `apt-get install -y ffmpeg` (needed by `svtplay-dl --output-format=mkv`).
 - **`nyuu` + `@animetosho/parpar`** via `npm install -g nyuu @animetosho/parpar`.
 - **`rar`** is non-free and not packaged in Debian's main repositories. The image's `entrypoint.sh` downloads the official RAR binary on first start. Pin the version in the entrypoint:
   ```sh
