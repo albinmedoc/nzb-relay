@@ -76,6 +76,7 @@ Mount `DATA_DIR` as a persistent volume in production.
 ## Release Images
 
 The GitHub Actions workflow builds and pushes to GitHub Container Registry when a GitHub release is published.
+The same release tag is baked into the image as `VERSION`, which is returned by `GET /v1/health`.
 
 For a non-prerelease release tag such as `v1.1.1`, the workflow publishes:
 

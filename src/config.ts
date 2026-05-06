@@ -80,7 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = path.resolve(env.DATA_DIR ?? '/data');
 
   return {
-    version: env.VERSION ?? env.npm_package_version ?? '0.1.0',
+    version: env.VERSION ?? '0.0.0',
     port: readInt(env.PORT, 3001, 'PORT'),
     apiKey: env.API_KEY ?? '',
     dataDir,

@@ -26,6 +26,10 @@ describe('http api', () => {
   it('leaves health open and gates other routes with bearer auth', async () => {
     const health = await app.request('/v1/health');
     expect(health.status).toBe(200);
+    expect(await health.json()).toMatchObject({
+      status: 'ok',
+      version: '0.0.0'
+    });
 
     const unauthorized = await app.request('/v1/files');
     expect(unauthorized.status).toBe(401);

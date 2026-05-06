@@ -23,13 +23,14 @@ Error responses use this JSON shape:
 ### `GET /v1/health`
 
 Returns service liveness once HTTP and the database are initialized.
+For release images, `version` is the GitHub release tag used to build the image.
 
 Response:
 
 ```json
 {
   "status": "ok",
-  "version": "0.1.0"
+  "version": "v1.1.0"
 }
 ```
 

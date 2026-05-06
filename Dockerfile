@@ -13,6 +13,7 @@ RUN pnpm prune --prod
 FROM node:20-slim AS runtime
 
 WORKDIR /app
+ARG VERSION=0.0.0
 RUN corepack enable
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg curl ca-certificates make g++ \
@@ -29,6 +30,7 @@ COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 ENV NODE_ENV=production
+ENV VERSION=${VERSION}
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"

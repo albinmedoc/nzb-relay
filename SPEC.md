@@ -67,7 +67,7 @@ Common error envelope: `{ "error": "<short message>", "code": "<machine-readable
 #### `GET /health`
 Liveness probe. Open (no auth).
 
-- **200**: `{ "status": "ok", "version": "<semver>" }`
+- **200**: `{ "status": "ok", "version": "<release-version>" }`. Release images set `version` from the GitHub release tag used to build the image.
 
 ### 3.2 Service discovery
 
