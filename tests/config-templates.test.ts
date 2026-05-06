@@ -3,6 +3,35 @@ import { assertUsenetConfigured, loadConfig, resolveWebhookUrl } from '../src/co
 import { renderDownloadFilename, renderSeasonPackReleaseName } from '../src/utils/templates.js';
 import { testConfig } from './helpers.js';
 
+const DEFAULT_USENET_NEWSGROUPS = [
+  'alt.binaries.newznzb.alpha',
+  'alt.binaries.newznzb.bravo',
+  'alt.binaries.newznzb.charlie',
+  'alt.binaries.newznzb.delta',
+  'alt.binaries.newznzb.echo',
+  'alt.binaries.newznzb.foxtrot',
+  'alt.binaries.newznzb.golf',
+  'alt.binaries.newznzb.hotel',
+  'alt.binaries.newznzb.india',
+  'alt.binaries.newznzb.juliett',
+  'alt.binaries.newznzb.kilo',
+  'alt.binaries.newznzb.lima',
+  'alt.binaries.newznzb.mike',
+  'alt.binaries.newznzb.november',
+  'alt.binaries.newznzb.oscar',
+  'alt.binaries.newznzb.papa',
+  'alt.binaries.newznzb.quebec',
+  'alt.binaries.newznzb.romeo',
+  'alt.binaries.newznzb.sierra',
+  'alt.binaries.newznzb.tango',
+  'alt.binaries.newznzb.uniform',
+  'alt.binaries.newznzb.victor',
+  'alt.binaries.newznzb.whiskey',
+  'alt.binaries.newznzb.xray',
+  'alt.binaries.newznzb.yankee',
+  'alt.binaries.newznzb.zulu'
+];
+
 describe('config and templates', () => {
   it('loads defaults and event-specific webhook overrides', () => {
     const config = loadConfig({
@@ -11,6 +40,7 @@ describe('config and templates', () => {
     });
 
     expect(config.port).toBe(3001);
+    expect(config.usenet.newsgroups).toEqual(DEFAULT_USENET_NEWSGROUPS);
     expect(resolveWebhookUrl(config, 'download.completed')).toBe('https://example.test/all');
     expect(resolveWebhookUrl(config, 'nzb.failed')).toBe('https://example.test/nzb-failed');
   });
@@ -35,16 +65,14 @@ describe('config and templates', () => {
     ).toEqual(['alt.binaries.tv', 'alt.binaries.misc']);
   });
 
-  it('reports the new newsgroup variable name when Usenet config is incomplete', () => {
+  it('uses the default newsgroups when validating Usenet config', () => {
     const config = loadConfig({
       USENET_HOST: 'news.example.com',
       USENET_USER: 'user',
       USENET_PASS: 'pass'
     });
 
-    expect(() => assertUsenetConfigured(config)).toThrow(
-      'missing Usenet configuration: USENET_NEWSGROUPS'
-    );
+    expect(() => assertUsenetConfigured(config)).not.toThrow();
   });
 
   it('renders sanitized episode and season-pack names', () => {

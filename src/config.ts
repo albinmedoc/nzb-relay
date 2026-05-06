@@ -41,6 +41,35 @@ const DEFAULT_TEMPLATES = {
   seasonPack: '{title}.s{season}.{service}.{ext}'
 };
 
+const DEFAULT_USENET_NEWSGROUPS = [
+  'alt.binaries.newznzb.alpha',
+  'alt.binaries.newznzb.bravo',
+  'alt.binaries.newznzb.charlie',
+  'alt.binaries.newznzb.delta',
+  'alt.binaries.newznzb.echo',
+  'alt.binaries.newznzb.foxtrot',
+  'alt.binaries.newznzb.golf',
+  'alt.binaries.newznzb.hotel',
+  'alt.binaries.newznzb.india',
+  'alt.binaries.newznzb.juliett',
+  'alt.binaries.newznzb.kilo',
+  'alt.binaries.newznzb.lima',
+  'alt.binaries.newznzb.mike',
+  'alt.binaries.newznzb.november',
+  'alt.binaries.newznzb.oscar',
+  'alt.binaries.newznzb.papa',
+  'alt.binaries.newznzb.quebec',
+  'alt.binaries.newznzb.romeo',
+  'alt.binaries.newznzb.sierra',
+  'alt.binaries.newznzb.tango',
+  'alt.binaries.newznzb.uniform',
+  'alt.binaries.newznzb.victor',
+  'alt.binaries.newznzb.whiskey',
+  'alt.binaries.newznzb.xray',
+  'alt.binaries.newznzb.yankee',
+  'alt.binaries.newznzb.zulu'
+];
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = path.resolve(env.DATA_DIR ?? '/data');
 
@@ -135,9 +164,15 @@ function readBool(value: string | undefined, fallback: boolean): boolean {
 }
 
 function readNewsgroups(env: NodeJS.ProcessEnv): string[] {
-  const value = env.USENET_NEWSGROUPS ?? env.USENET_NEWSGROUP ?? env.USENET_RELEASE_GROUP ?? '';
-  return value
+  const value = env.USENET_NEWSGROUPS || env.USENET_NEWSGROUP || env.USENET_RELEASE_GROUP;
+  if (!value) {
+    return [...DEFAULT_USENET_NEWSGROUPS];
+  }
+
+  const newsgroups = value
     .split(',')
     .map((newsgroup) => newsgroup.trim())
     .filter(Boolean);
+
+  return newsgroups.length > 0 ? newsgroups : [...DEFAULT_USENET_NEWSGROUPS];
 }

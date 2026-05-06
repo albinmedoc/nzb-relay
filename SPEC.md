@@ -567,7 +567,38 @@ Substitutions: `{title}`, `{service}`, `{quality}`, `{season}` (zero-padded to 2
 | `USENET_SSL`  | no | `true` | `true` or `false`; controls whether nyuu negotiates TLS |
 | `USENET_USER` | yes | — | NNTP username |
 | `USENET_PASS` | yes | — | NNTP password |
-| `USENET_NEWSGROUPS` | yes | — | Comma-separated newsgroups to publish articles to (e.g. `alt.binaries.misc,alt.binaries.tv`) |
+| `USENET_NEWSGROUPS` | no | See below | Comma-separated newsgroups to publish articles to |
+
+Default `USENET_NEWSGROUPS`:
+
+```text
+alt.binaries.newznzb.alpha
+alt.binaries.newznzb.bravo
+alt.binaries.newznzb.charlie
+alt.binaries.newznzb.delta
+alt.binaries.newznzb.echo
+alt.binaries.newznzb.foxtrot
+alt.binaries.newznzb.golf
+alt.binaries.newznzb.hotel
+alt.binaries.newznzb.india
+alt.binaries.newznzb.juliett
+alt.binaries.newznzb.kilo
+alt.binaries.newznzb.lima
+alt.binaries.newznzb.mike
+alt.binaries.newznzb.november
+alt.binaries.newznzb.oscar
+alt.binaries.newznzb.papa
+alt.binaries.newznzb.quebec
+alt.binaries.newznzb.romeo
+alt.binaries.newznzb.sierra
+alt.binaries.newznzb.tango
+alt.binaries.newznzb.uniform
+alt.binaries.newznzb.victor
+alt.binaries.newznzb.whiskey
+alt.binaries.newznzb.xray
+alt.binaries.newznzb.yankee
+alt.binaries.newznzb.zulu
+```
 
 ### 7.4 Webhooks
 

@@ -52,7 +52,7 @@ pnpm test
 
 ## Run Locally
 
-The application requires Usenet settings at startup.
+The application requires Usenet server credentials at startup. `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups, and can be set to a comma-separated list to override them.
 
 ```sh
 DATA_DIR=./data \
@@ -60,7 +60,6 @@ API_KEY=dev-secret \
 USENET_HOST=news.example.com \
 USENET_USER=user \
 USENET_PASS=pass \
-USENET_NEWSGROUPS=alt.binaries.example,alt.binaries.misc \
 pnpm run dev
 ```
 
