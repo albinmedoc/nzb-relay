@@ -20,7 +20,14 @@ import {
   listNzbs,
   markFileDeleted
 } from '../db/repository.js';
-import type { FileRow, NzbRow } from '../types.js';
+import {
+  deleteWatchlistSource,
+  getWatchlistSource,
+  insertWatchlistSource,
+  listWatchlistEpisodesForSource,
+  listWatchlistSources
+} from '../db/watchlist-repository.js';
+import type { FileRow, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
 import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
 import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
@@ -31,6 +38,7 @@ import {
 } from '../utils/templates.js';
 import { authMiddleware, requestLoggingMiddleware } from './middleware.js';
 import { errorResponse, isSqliteUniqueConstraint } from './errors.js';
+import { defaultWatchProviders, resolveWatchProvider, type WatchProvider } from '../watchlist/providers.js';
 
 export interface WorkerControllers {
   downloads?: {
@@ -51,6 +59,7 @@ interface CreateAppDeps {
   logger: Logger;
   workers?: WorkerControllers;
   svtDiscovery?: SvtDiscovery;
+  watchProviders?: WatchProvider[];
 }
 
 export function createApp({
@@ -58,7 +67,8 @@ export function createApp({
   config,
   logger,
   workers = {},
-  svtDiscovery = { fetchSerie: fetchSvtSerie }
+  svtDiscovery = { fetchSerie: fetchSvtSerie },
+  watchProviders = defaultWatchProviders
 }: CreateAppDeps): Hono {
   const app = new Hono();
   app.use('*', requestLoggingMiddleware(logger));
@@ -117,6 +127,75 @@ export function createApp({
       logger.error({ error }, 'failed to create download');
       return errorResponse(c, 500, 'internal_error', 'failed to create download');
     }
+  });
+
+  v1.post('/watchlist', async (c) => {
+    const body = await readJsonObject(c);
+    if (!body.ok) {
+      return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
+    }
+
+    const url = stringField(body.value.url);
+    if (!url) {
+      return errorResponse(c, 400, 'missing_required_param', 'missing required parameter');
+    }
+
+    const backfillValidation = optionalBoolean(body.value.backfill);
+    if (!backfillValidation.ok) {
+      return errorResponse(c, 400, 'invalid_backfill', 'backfill must be a boolean');
+    }
+
+    const resolved = resolveWatchProvider(url, watchProviders);
+    if (!resolved) {
+      return errorResponse(c, 400, 'unsupported_watch_url', 'watch URL is not supported');
+    }
+
+    try {
+      const row = insertWatchlistSource(db, {
+        service: resolved.provider.service,
+        type: resolved.provider.type,
+        url: resolved.normalizedUrl,
+        backfill: backfillValidation.value ?? true
+      });
+      return c.json(serializeWatchlistSource(row), 201);
+    } catch (error) {
+      if (isSqliteUniqueConstraint(error)) {
+        return errorResponse(c, 409, 'duplicate_watch_url', 'watch URL already exists');
+      }
+      logger.error({ error }, 'failed to create watchlist source');
+      return errorResponse(c, 500, 'internal_error', 'failed to create watchlist source');
+    }
+  });
+
+  v1.get('/watchlist', (c) => {
+    const { limit, offset } = parsePagination(c);
+    const result = listWatchlistSources(db, limit, offset);
+    return c.json({
+      items: result.items.map(serializeWatchlistSourceSummary),
+      total: result.total,
+      limit,
+      offset
+    });
+  });
+
+  v1.get('/watchlist/:sourceId', (c) => {
+    const source = getWatchlistSource(db, c.req.param('sourceId'));
+    if (!source) {
+      return errorResponse(c, 404, 'not_found', 'watchlist source not found');
+    }
+
+    return c.json({
+      ...serializeWatchlistSource(source),
+      episodes: listWatchlistEpisodesForSource(db, source.id).map(serializeWatchlistEpisode)
+    });
+  });
+
+  v1.delete('/watchlist/:sourceId', (c) => {
+    if (!deleteWatchlistSource(db, c.req.param('sourceId'))) {
+      return errorResponse(c, 404, 'not_found', 'watchlist source not found');
+    }
+
+    return c.body(null, 204);
   });
 
   v1.get('/files', (c) => {
@@ -313,6 +392,60 @@ function serializeNzb(db: AppDatabase, row: NzbRow) {
   };
 }
 
+function serializeWatchlistSource(row: WatchlistSourceRow) {
+  return {
+    id: row.id,
+    service: row.service,
+    type: row.type,
+    url: row.url,
+    title: row.title,
+    enabled: Boolean(row.enabled),
+    backfill: Boolean(row.backfill),
+    firstScanCompleted: Boolean(row.firstScanCompleted),
+    lastScannedAt: row.lastScannedAt,
+    nextScanAt: row.nextScanAt,
+    lastErrorCode: row.lastErrorCode,
+    lastError: row.lastError,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function serializeWatchlistSourceSummary(row: WatchlistSourceSummary) {
+  return {
+    ...serializeWatchlistSource(row),
+    episodeCount: Number(row.episodeCount),
+    queuedCount: Number(row.queuedCount),
+    postedCount: Number(row.postedCount),
+    blockedCount: Number(row.blockedCount)
+  };
+}
+
+function serializeWatchlistEpisode(row: WatchlistEpisodeRow) {
+  return {
+    id: row.id,
+    sourceId: row.sourceId,
+    url: row.url,
+    season: row.season,
+    episode: row.episode,
+    title: row.title,
+    quality: row.quality,
+    status: row.status,
+    fileId: row.fileId,
+    nzbId: row.nzbId,
+    downloadAttempts: row.downloadAttempts,
+    nzbAttempts: row.nzbAttempts,
+    downloadQueuedAt: row.downloadQueuedAt,
+    downloadedAt: row.downloadedAt,
+    nzbQueuedAt: row.nzbQueuedAt,
+    postedAt: row.postedAt,
+    lastErrorCode: row.lastErrorCode,
+    lastError: row.lastError,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 async function readJsonObject(c: Context): Promise<
   | { ok: true; value: Record<string, unknown> }
   | { ok: false }
@@ -472,6 +605,16 @@ function optionalInteger(value: unknown): { ok: true; value: number | null } | {
   }
   if (Number.isInteger(value)) {
     return { ok: true, value: value as number };
+  }
+  return { ok: false };
+}
+
+function optionalBoolean(value: unknown): { ok: true; value: boolean | null } | { ok: false } {
+  if (value == null) {
+    return { ok: true, value: null };
+  }
+  if (typeof value === 'boolean') {
+    return { ok: true, value };
   }
   return { ok: false };
 }

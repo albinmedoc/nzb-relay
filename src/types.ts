@@ -1,5 +1,16 @@
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type WebhookStatus = 'pending' | 'delivered' | 'failed';
+export type WatchlistSourceType = 'series';
+export type WatchlistEpisodeStatus =
+  | 'seen'
+  | 'discovered'
+  | 'download_queued'
+  | 'download_failed'
+  | 'download_completed'
+  | 'nzb_queued'
+  | 'nzb_failed'
+  | 'posted'
+  | 'blocked';
 
 export type ErrorCode =
   | 'insufficient_space'
@@ -53,6 +64,60 @@ export interface WebhookDeliveryRow {
   createdAt: string;
 }
 
+export interface WatchlistSourceRow {
+  id: string;
+  service: string;
+  type: WatchlistSourceType;
+  url: string;
+  title: string | null;
+  enabled: number;
+  backfill: number;
+  firstScanCompleted: number;
+  lastScannedAt: string | null;
+  nextScanAt: string | null;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WatchlistEpisodeRow {
+  id: string;
+  sourceId: string;
+  url: string;
+  season: number;
+  episode: number;
+  title: string;
+  quality: string;
+  status: WatchlistEpisodeStatus;
+  fileId: string | null;
+  nzbId: string | null;
+  downloadAttempts: number;
+  nzbAttempts: number;
+  downloadQueuedAt: string | null;
+  downloadedAt: string | null;
+  nzbQueuedAt: string | null;
+  postedAt: string | null;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WatchlistEpisodeWithSource extends WatchlistEpisodeRow {
+  sourceService: string;
+  sourceType: WatchlistSourceType;
+  sourceUrl: string;
+  sourceTitle: string | null;
+}
+
+export interface WatchlistSourceSummary extends WatchlistSourceRow {
+  episodeCount: number;
+  queuedCount: number;
+  postedCount: number;
+  blockedCount: number;
+}
+
 export interface NzbFileSummary {
   id: string;
   url: string;
@@ -72,4 +137,3 @@ export interface ChildProcessResult {
   lastStderrLine: string | null;
   error: Error | null;
 }
-

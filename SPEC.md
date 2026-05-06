@@ -1,6 +1,6 @@
 # Specification
 
-A small HTTP service that wraps `svtplay-dl` (download) and `nyuu` + `parpar` + `rar` (Usenet upload), driven entirely by an external orchestrator (e.g. n8n) over a REST API. The service has no UI of its own — every action is initiated through HTTP and every outcome is signalled by webhook.
+A small HTTP service that wraps `svtplay-dl` (download) and `nyuu` + `parpar` + `rar` (Usenet upload). It can be driven by an external orchestrator over REST, or it can monitor supported series itself through the built-in watchlist. The service has no UI of its own.
 
 The design priority is robustness: every job has a deterministic lifecycle that survives crashes and restarts, and every terminal state produces a durable, retried notification.
 
@@ -11,11 +11,12 @@ The design priority is robustness: every job has a deterministic lifecycle that 
 - Every job has a clear lifecycle (`pending → running → completed | failed`) that survives restarts.
 - Every terminal state produces a durable webhook delivery when a destination URL is configured and survives restarts.
 - Idempotent against duplicate submissions; failed work can be retried without manual cleanup.
+- Built-in watchlist polling for supported series sources, starting with SVT Play.
 - All state lives in one SQLite file; all artifacts live under one configurable directory.
 
 **Non-Goals**
 - No web UI.
-- No built-in scheduling / recurring jobs (the orchestrator's responsibility).
+- No generalized scheduler beyond the built-in watchlist poller.
 - No multi-user, no roles — single bearer token.
 - No multi-tenant.
 - No HMAC required by default (opt-in via env).
@@ -25,10 +26,11 @@ The design priority is robustness: every job has a deterministic lifecycle that 
 
 A single long-running Node.js process that exposes:
 - An HTTP API for submitting and inspecting jobs.
-- Three internal background workers running serially:
-  1. **Download worker** — drains `pending` rows in the `file` table.
-  2. **NZB worker** — drains `pending` rows in the `nzb` table.
-  3. **Webhook dispatcher** — drains `pending` rows in `webhook_deliveries`.
+- Four internal background workers:
+  1. **Watchlist worker** — polls watched sources, records episodes, and queues normal download/NZB jobs.
+  2. **Download worker** — drains `pending` rows in the `file` table.
+  3. **NZB worker** — drains `pending` rows in the `nzb` table.
+  4. **Webhook dispatcher** — drains `pending` rows in `webhook_deliveries`.
 
 State is kept in a single SQLite database (WAL mode). Generated artifacts (mkv files, NZB files, log files) live on the filesystem under a single configurable root directory.
 

@@ -77,3 +77,60 @@ export const webhookDeliveries = sqliteTable(
   })
 );
 
+export const watchlistSource = sqliteTable(
+  'watchlist_source',
+  {
+    id: text('id').primaryKey(),
+    service: text('service').notNull(),
+    type: text('type').notNull(),
+    url: text('url').notNull(),
+    title: text('title'),
+    enabled: integer('enabled').notNull().default(1),
+    backfill: integer('backfill').notNull().default(1),
+    firstScanCompleted: integer('firstScanCompleted').notNull().default(0),
+    lastScannedAt: text('lastScannedAt'),
+    nextScanAt: text('nextScanAt'),
+    lastErrorCode: text('lastErrorCode'),
+    lastError: text('lastError'),
+    createdAt: text('createdAt').notNull(),
+    updatedAt: text('updatedAt').notNull()
+  },
+  (table) => ({
+    urlUnique: uniqueIndex('watchlist_source_url_unique').on(table.url),
+    enabledNextScanIdx: index('watchlist_source_enabled_next_scan_idx').on(table.enabled, table.nextScanAt)
+  })
+);
+
+export const watchlistEpisode = sqliteTable(
+  'watchlist_episode',
+  {
+    id: text('id').primaryKey(),
+    sourceId: text('sourceId')
+      .notNull()
+      .references(() => watchlistSource.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    season: integer('season').notNull(),
+    episode: integer('episode').notNull(),
+    title: text('title').notNull(),
+    quality: text('quality').notNull(),
+    status: text('status').notNull(),
+    fileId: text('fileId').references(() => file.id, { onDelete: 'set null' }),
+    nzbId: text('nzbId').references(() => nzb.id, { onDelete: 'set null' }),
+    downloadAttempts: integer('downloadAttempts').notNull().default(0),
+    nzbAttempts: integer('nzbAttempts').notNull().default(0),
+    downloadQueuedAt: text('downloadQueuedAt'),
+    downloadedAt: text('downloadedAt'),
+    nzbQueuedAt: text('nzbQueuedAt'),
+    postedAt: text('postedAt'),
+    lastErrorCode: text('lastErrorCode'),
+    lastError: text('lastError'),
+    createdAt: text('createdAt').notNull(),
+    updatedAt: text('updatedAt').notNull()
+  },
+  (table) => ({
+    sourceUrlUnique: uniqueIndex('watchlist_episode_source_url_unique').on(table.sourceId, table.url),
+    statusIdx: index('watchlist_episode_status_idx').on(table.status),
+    fileIdIdx: index('watchlist_episode_file_id_idx').on(table.fileId),
+    nzbIdIdx: index('watchlist_episode_nzb_id_idx').on(table.nzbId)
+  })
+);

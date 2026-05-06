@@ -73,6 +73,146 @@ Status codes:
 - `404` series not found
 - `502` SVT discovery fetch or parse failed
 
+## Watchlist
+
+The watchlist is provider-neutral, but currently only SVT Play series URLs are supported.
+The app polls watched sources, records discovered episodes, queues missing downloads, and can automatically queue one NZB per completed episode.
+
+Environment knobs:
+
+- `WATCHLIST_POLL_INTERVAL_SECONDS`, default `3600`
+- `WATCHLIST_RECONCILE_INTERVAL_SECONDS`, default `10`
+- `WATCHLIST_AUTO_NZB`, default `true`
+- `WATCHLIST_MAX_ATTEMPTS`, default `3`
+
+### `POST /v1/watchlist`
+
+Adds a series URL to the watchlist.
+
+Request:
+
+```json
+{
+  "url": "https://www.svtplay.se/30-grader-i-februari",
+  "backfill": true
+}
+```
+
+Required fields:
+
+- `url`
+
+Optional fields:
+
+- `backfill`, default `true`
+
+When `backfill=false`, the first successful scan records currently available episodes as `seen` without queueing them. Episodes first discovered on later scans are queued normally.
+
+Response:
+
+```json
+{
+  "id": "uuid",
+  "service": "svtplay",
+  "type": "series",
+  "url": "https://www.svtplay.se/30-grader-i-februari",
+  "title": null,
+  "enabled": true,
+  "backfill": true,
+  "firstScanCompleted": false,
+  "lastScannedAt": null,
+  "nextScanAt": "2026-05-06T12:00:00.000Z",
+  "lastErrorCode": null,
+  "lastError": null,
+  "createdAt": "2026-05-06T12:00:00.000Z",
+  "updatedAt": "2026-05-06T12:00:00.000Z"
+}
+```
+
+Status codes:
+
+- `201` created
+- `400 invalid_json`
+- `400 missing_required_param`
+- `400 invalid_backfill`
+- `400 unsupported_watch_url`
+- `409 duplicate_watch_url`
+
+### `GET /v1/watchlist`
+
+Lists watchlist sources, newest first.
+
+Query parameters:
+
+- `limit`, default `20`, max `100`
+- `offset`, default `0`
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "service": "svtplay",
+      "type": "series",
+      "url": "https://www.svtplay.se/30-grader-i-februari",
+      "title": "30 grader i februari",
+      "enabled": true,
+      "backfill": true,
+      "firstScanCompleted": true,
+      "lastScannedAt": "2026-05-06T12:00:00.000Z",
+      "nextScanAt": "2026-05-06T13:00:00.000Z",
+      "lastErrorCode": null,
+      "lastError": null,
+      "createdAt": "2026-05-06T11:55:00.000Z",
+      "updatedAt": "2026-05-06T12:00:00.000Z",
+      "episodeCount": 10,
+      "queuedCount": 1,
+      "postedCount": 8,
+      "blockedCount": 0
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+### `GET /v1/watchlist/:sourceId`
+
+Returns a watchlist source and its episodes.
+
+Episode rows reference the source and only store episode-specific metadata. Source fields such as `service` and series `title` are used when queueing downloads for filename rendering.
+
+Episode statuses:
+
+- `seen`
+- `discovered`
+- `download_queued`
+- `download_failed`
+- `download_completed`
+- `nzb_queued`
+- `nzb_failed`
+- `posted`
+- `blocked`
+
+Status codes:
+
+- `200` found
+- `404` source does not exist
+
+### `DELETE /v1/watchlist/:sourceId`
+
+Stops monitoring a source and deletes its watchlist metadata.
+
+This does not delete files, NZB jobs, or artifacts that were already created.
+
+Status codes:
+
+- `204` deleted
+- `404` source does not exist
+
 ## Downloads
 
 ### `POST /v1/downloads`

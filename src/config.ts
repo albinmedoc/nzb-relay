@@ -12,6 +12,12 @@ export interface Config {
   nzbDir: string;
   logLevel: string;
   stagingMultiplier: number;
+  watchlist: {
+    pollIntervalSeconds: number;
+    reconcileIntervalSeconds: number;
+    autoNzb: boolean;
+    maxAttempts: number;
+  };
   templates: {
     episode: string;
     movie: string;
@@ -84,6 +90,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     nzbDir: path.join(dataDir, 'nzb'),
     logLevel: env.LOG_LEVEL ?? 'info',
     stagingMultiplier: readFloat(env.STAGING_MULTIPLIER, 2.2, 'STAGING_MULTIPLIER'),
+    watchlist: {
+      pollIntervalSeconds: readPositiveInt(env.WATCHLIST_POLL_INTERVAL_SECONDS, 3600, 'WATCHLIST_POLL_INTERVAL_SECONDS'),
+      reconcileIntervalSeconds: readPositiveInt(env.WATCHLIST_RECONCILE_INTERVAL_SECONDS, 10, 'WATCHLIST_RECONCILE_INTERVAL_SECONDS'),
+      autoNzb: readBool(env.WATCHLIST_AUTO_NZB, true),
+      maxAttempts: readPositiveInt(env.WATCHLIST_MAX_ATTEMPTS, 3, 'WATCHLIST_MAX_ATTEMPTS')
+    },
     templates: {
       episode: env.TEMPLATE_EPISODE ?? DEFAULT_TEMPLATES.episode,
       movie: env.TEMPLATE_MOVIE ?? DEFAULT_TEMPLATES.movie,
@@ -141,6 +153,14 @@ function readInt(value: string | undefined, fallback: number, name: string): num
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) {
     throw new Error(`${name} must be an integer`);
+  }
+  return parsed;
+}
+
+function readPositiveInt(value: string | undefined, fallback: number, name: string): number {
+  const parsed = readInt(value, fallback, name);
+  if (parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
   }
   return parsed;
 }

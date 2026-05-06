@@ -8,6 +8,7 @@ import { recoverInterruptedJobs } from './recovery.js';
 import { createApp } from './http/routes.js';
 import { DownloadWorker } from './workers/download-worker.js';
 import { NzbWorker } from './workers/nzb-worker.js';
+import { WatchlistWorker } from './workers/watchlist-worker.js';
 import { WebhookDispatcher } from './workers/webhook-dispatcher.js';
 
 export interface Runtime {
@@ -18,6 +19,7 @@ export interface Runtime {
   workers: {
     downloads: DownloadWorker;
     nzb: NzbWorker;
+    watchlist: WatchlistWorker;
     webhooks: WebhookDispatcher;
   };
   startHttp(): Server;
@@ -48,6 +50,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
     const downloads = new DownloadWorker(db, config, logger);
     const nzb = new NzbWorker(db, config, logger);
+    const watchlist = new WatchlistWorker(db, config, logger);
     const webhooks = new WebhookDispatcher(db, config, logger);
     const app = createApp({
       db,
@@ -62,6 +65,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (options.startWorkers !== false) {
       downloads.start();
       nzb.start();
+      watchlist.start();
       webhooks.start();
     }
 
@@ -75,6 +79,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       workers: {
         downloads,
         nzb,
+        watchlist,
         webhooks
       },
       startHttp() {
@@ -87,7 +92,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       async stop() {
         await closeServer(server);
-        await Promise.all([downloads.stop(), nzb.stop(), webhooks.stop()]);
+        await Promise.all([downloads.stop(), nzb.stop(), watchlist.stop(), webhooks.stop()]);
         db.close();
         await releaseLock?.();
       }

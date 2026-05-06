@@ -1,19 +1,24 @@
 # nzb-relay
 
-`nzb-relay` is a small HTTP service for orchestrated media download and Usenet upload workflows. It wraps:
+`nzb-relay` is a small HTTP service for monitored media download and Usenet upload workflows. It wraps:
 
 - `svtplay-dl` for downloads
 - `rar`, `parpar`, and `nyuu` for NZB/Usenet posting
 - SQLite for durable job state
+- A built-in watchlist for polling supported series
 - Webhooks for completion and failure notifications
 
-The service has no UI. It is intended to be driven by an external orchestrator such as n8n, cron-backed scripts, or another REST client.
+The service has no UI. It can monitor supported series itself through the watchlist API, or be driven by an external orchestrator such as n8n, cron-backed scripts, or another REST client.
+
+For the HTTP contract, see [docs/API.md](docs/API.md). An optional n8n setup is documented in
+[docs/N8N_SVTPLAY.md](docs/N8N_SVTPLAY.md).
 
 ## What It Does
 
 - Accepts async download jobs over HTTP.
+- Monitors watched SVT Play series and queues newly discovered episodes.
 - Stores every job in SQLite with a deterministic lifecycle: `pending -> running -> completed | failed`.
-- Runs one download worker and one NZB upload worker serially.
+- Runs watchlist, download, NZB upload, and webhook workers.
 - Persists generated media, NZB files, and logs under one `DATA_DIR`.
 - Sends durable webhook notifications for terminal states, with retries after restarts.
 - Exposes read and download endpoints for job metadata, logs, MKV files, and NZB files.

@@ -5,6 +5,7 @@ import pino from 'pino';
 import { loadConfig, type Config } from '../src/config.js';
 import { openDatabase, runMigrations, type AppDatabase } from '../src/db/client.js';
 import { createApp, type SvtDiscovery, type WorkerControllers } from '../src/http/routes.js';
+import type { WatchProvider } from '../src/watchlist/providers.js';
 
 export async function createTempDataDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'nzb-relay-'));
@@ -29,14 +30,16 @@ export function createTestApp(
   db: AppDatabase,
   config: Config,
   workers?: WorkerControllers,
-  svtDiscovery?: SvtDiscovery
+  svtDiscovery?: SvtDiscovery,
+  watchProviders?: WatchProvider[]
 ) {
   return createApp({
     db,
     config,
     logger: pino({ enabled: false }),
     workers,
-    svtDiscovery
+    svtDiscovery,
+    watchProviders
   });
 }
 
