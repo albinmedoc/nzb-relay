@@ -121,6 +121,7 @@ export interface WatchlistSourceSummary extends WatchlistSourceRow {
 export interface NzbFileSummary {
   id: string;
   url: string;
+  status: JobStatus;
   title: string;
   service: string;
   season: number | null;

@@ -41,7 +41,8 @@ describe('download worker', () => {
       '--output-format=mkv',
       '-M',
       '--all-subtitles',
-      `--output=${path.join(dataDir, 'downloads', 'file-1', 'Title.svtplay.mkv')}`,
+      `--output=${path.join(dataDir, 'downloads', 'file-1')}`,
+      '--filename=Title.svtplay.{ext}',
       'https://www.svtplay.se/video/1'
     ]);
   });

@@ -423,6 +423,7 @@ Response:
         {
           "id": "file-uuid",
           "url": "https://...",
+          "status": "completed",
           "downloadedAt": "2026-05-05T11:00:00.000Z"
         }
       ]

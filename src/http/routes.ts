@@ -387,6 +387,7 @@ function serializeNzb(db: AppDatabase, row: NzbRow) {
     files: canonicalFilesForNzb(db, row.id).map((file) => ({
       id: file.id,
       url: file.url,
+      status: file.status,
       downloadedAt: file.downloadedAt
     }))
   };

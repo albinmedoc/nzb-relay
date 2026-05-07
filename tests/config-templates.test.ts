@@ -92,6 +92,7 @@ describe('config and templates', () => {
       renderSeasonPackReleaseName(config, {
         id: 'f1',
         url: 'https://example.test',
+        status: 'completed',
         title: 'Show Name',
         service: 'svtplay',
         season: 3,

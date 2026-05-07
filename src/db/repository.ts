@@ -188,6 +188,8 @@ export function insertNzb(db: AppDatabase, input: CreateNzbInput): NzbRow {
   const nzbFile = `${id}.nzb`;
 
   db.transaction(() => {
+    assertNzbFilesPostable(db, input.fileIds);
+
     db.prepare(
       `
         INSERT INTO nzb (
@@ -204,6 +206,21 @@ export function insertNzb(db: AppDatabase, input: CreateNzbInput): NzbRow {
   })();
 
   return getNzbOrThrow(db, id);
+}
+
+function assertNzbFilesPostable(db: AppDatabase, fileIds: string[]): void {
+  for (const fileId of fileIds) {
+    const row = getFile(db, fileId);
+    if (!row) {
+      throw new Error(`file missing: ${fileId}`);
+    }
+    if (row.status !== 'completed') {
+      throw new Error(`file not completed: ${fileId} (${row.status})`);
+    }
+    if (row.deleted) {
+      throw new Error(`file deleted: ${fileId}`);
+    }
+  }
 }
 
 export function getNzb(db: AppDatabase, id: string): NzbRow | null {
@@ -270,7 +287,7 @@ export function canonicalFilesForNzb(db: AppDatabase, nzbId: string): NzbFileSum
   return db
     .prepare(
       `
-        SELECT f.id, f.url, f.title, f.service, f.season, f.episode, f.filename, f.downloadedAt, f.deleted
+        SELECT f.id, f.url, f.status, f.title, f.service, f.season, f.episode, f.filename, f.downloadedAt, f.deleted
         FROM nzb_files nf
         JOIN file f ON f.id = nf.fileId
         WHERE nf.nzbId = ?

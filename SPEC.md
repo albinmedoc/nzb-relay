@@ -281,7 +281,7 @@ Paginated list. Query params: `?limit=20&offset=0` (defaults shown). Sorted newe
         "errorCode": null,
         "error": null,
         "files": [
-          { "id": "<uuid>", "url": "...", "downloadedAt": "..." }
+          { "id": "<uuid>", "url": "...", "status": "completed", "downloadedAt": "..." }
         ]
       }
     ],
@@ -305,7 +305,7 @@ Returns JSON metadata for an NZB job (does **not** stream the NZB). The `files[]
     "errorCode": null,
     "error": null,
     "files": [
-      { "id": "<uuid>", "url": "...", "downloadedAt": "..." }
+      { "id": "<uuid>", "url": "...", "status": "completed", "downloadedAt": "..." }
     ]
   }
   ```
@@ -652,13 +652,14 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
      --output-format=mkv \
      -M \
      --all-subtitles \
-     --output=<DATA_DIR>/downloads/<fileId>/<filename>.mkv \
+     --output=<DATA_DIR>/downloads/<fileId> \
+     --filename=<filename-without-extension>.{ext} \
      <url>
    ```
    - `--output-format=mkv` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
    - `-M --all-subtitles` merges every available subtitle track into the mkv.
-   - `--output` is a fully-qualified path; svtplay-dl will not append its own naming.
-4. On exit code 0: update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).
+   - `--output` is the per-file download directory; `--filename` controls the final media basename.
+4. On exit code 0: verify `<DATA_DIR>/downloads/<fileId>/<filename>.mkv` exists, then update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).
 5. On non-zero exit, signal-kill, or spawn error: update to `status='failed'`, set `error` to the last line of stderr (truncated to 200 chars), set `errorCode` per §6.1 (typically `child_exit_nonzero`; use `insufficient_space` if the worker detects `ENOSPC` while writing the mkv), queue `download.failed`, run §5.4 cleanup.
 
 The log file is the source of truth for human debugging. The DB stores only the one-line summary.

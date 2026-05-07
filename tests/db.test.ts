@@ -5,6 +5,7 @@ import {
   claimFile,
   getFile,
   insertFile,
+  insertNzb,
   recoverFileInterrupted,
   transitionFileCompleted,
   transitionFileFailed
@@ -51,6 +52,15 @@ describe('database invariants', () => {
     expect(file.status).toBe('completed');
     expect(delivery.event).toBe('download.completed');
     expect(JSON.parse(delivery.payload).data.fileId).toBe(row.id);
+  });
+
+  it('rejects NZB creation for files that are not completed', () => {
+    const row = insertFile(db, fileInput('https://example.test/pending-nzb'));
+
+    expect(() => insertNzb(db, { releaseName: 'Title.s01e01.svtplay.mkv', fileIds: [row.id] })).toThrow(
+      `file not completed: ${row.id} (pending)`
+    );
+    expect((db.prepare('SELECT COUNT(*) AS count FROM nzb').get() as { count: number }).count).toBe(0);
   });
 
   it('recovers deleted running files without enqueueing a webhook', () => {

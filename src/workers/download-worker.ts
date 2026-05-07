@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
 import type { Config } from '../config.js';
@@ -13,7 +14,7 @@ import {
 } from '../db/repository.js';
 import { childFailureSummary, isEnospc, runLoggedProcess } from '../utils/child.js';
 import { removeDownloadPartialsKeepLog } from '../utils/cleanup.js';
-import { fileLogPath, fileMediaPath, downloadDir } from '../utils/paths.js';
+import { fileLogPath, fileMediaPath, downloadDir, stripMkv } from '../utils/paths.js';
 import { sleep } from '../utils/time.js';
 import type { FileRow } from '../types.js';
 
@@ -119,6 +120,7 @@ export class DownloadWorker {
       });
 
       if (result.code === 0) {
+        await ensureDownloadedMediaAtExpectedPath(this.config, row, logStream);
         logStream.write(`completed ${row.filename}\n`);
         transitionFileCompleted(this.db, this.config, row);
         return;
@@ -160,7 +162,52 @@ export function buildSvtplayDownloadArgs(config: Config, row: FileRow): string[]
     '--output-format=mkv',
     '-M',
     '--all-subtitles',
-    `--output=${fileMediaPath(config, row)}`,
+    `--output=${downloadDir(config, row.id)}`,
+    `--filename=${stripMkv(row.filename)}.{ext}`,
     row.url
   ];
+}
+
+async function ensureDownloadedMediaAtExpectedPath(
+  config: Config,
+  row: FileRow,
+  logStream: fs.WriteStream
+): Promise<void> {
+  const expectedPath = fileMediaPath(config, row);
+  try {
+    await fsp.stat(expectedPath);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  const candidates = await downloadedMediaCandidates(config, row);
+  if (candidates.length === 1) {
+    logStream.write(`renaming downloaded media ${candidates[0]} to ${expectedPath}\n`);
+    await fsp.rename(candidates[0]!, expectedPath);
+    return;
+  }
+
+  throw new Error(
+    `download completed but expected media is missing: ${expectedPath}; found ${candidates.length} media candidates`
+  );
+}
+
+async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<string[]> {
+  const dir = downloadDir(config, row.id);
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  return entries
+    .filter((entry) => /\.(mkv|mp4)$/i.test(entry))
+    .map((entry) => path.join(dir, entry));
 }

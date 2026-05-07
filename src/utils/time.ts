@@ -12,15 +12,20 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   }
 
   return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true }
-    );
+    const cleanup = () => {
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    };
+    const finish = () => {
+      cleanup();
+      resolve();
+    };
+    const onAbort = () => {
+      clearTimeout(timeout);
+      finish();
+    };
+    const timeout = setTimeout(finish, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
-
