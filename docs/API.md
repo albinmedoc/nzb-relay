@@ -80,6 +80,7 @@ The watchlist is provider-neutral, but currently only SVT Play series URLs are s
 The app polls watched sources, records discovered episodes, queues missing downloads, and can automatically queue one NZB per completed episode.
 Watchlist retries create new file/NZB job rows while an episode is failing, then remove older failed attempts once a later download or NZB succeeds.
 If an NZB fails because the completed media file is missing, the episode is moved back to download retry state.
+Auto-queued watchlist NZBs use the completed media filename basename for the NZB/log basename, for example `Show.s01e02.svtplay.mkv` becomes `Show.s01e02.svtplay.nzb`.
 
 Environment knobs:
 
@@ -367,13 +368,16 @@ Request:
 
 ```json
 {
-  "fileIds": ["uuid-1", "uuid-2"]
+  "fileIds": ["uuid-1", "uuid-2"],
+  "name": "Bakom.varje.man.s02.svtplay"
 }
 ```
 
+`name` is the release/NZB basename. It is sanitized the same way as generated filenames and is used for the NZB and log files under `/data/nzb/<nzbId>/`.
+
 Validation order:
 
-1. Body shape: `empty_list`, `duplicate_file_id`
+1. Body shape: `empty_list`, `duplicate_file_id`, `invalid_name`
 2. File existence and state, in submission order: `file_missing`, `file_pending`, `file_failed`, `file_deleted`
 3. Multi-file consistency: `season_pack_mismatch`
 
@@ -391,6 +395,7 @@ Status codes:
 - `202` queued
 - `400 empty_list`
 - `400 duplicate_file_id`
+- `400 invalid_name`
 - `400 season_pack_mismatch`
 - `409 file_missing`
 - `409 file_pending`
@@ -416,7 +421,7 @@ Response:
     {
       "id": "uuid",
       "status": "completed",
-      "nzbFile": "uuid.nzb",
+      "nzbFile": "uuid/Bakom.varje.man.s02.svtplay.nzb",
       "createdAt": "2026-05-05T12:00:00.000Z",
       "postedAt": "2026-05-05T12:10:00.000Z",
       "errorCode": null,

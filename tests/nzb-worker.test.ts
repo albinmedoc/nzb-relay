@@ -40,15 +40,19 @@ describe('nzb worker', () => {
     });
     const args = buildNyuuArgs(
       config,
-      { releaseName: 'Release', nzbFile: 'nzb-1.nzb' },
+      { releaseName: 'Release', nzbFile: 'nzb-1/Release.nzb' },
       'secret',
-      [path.join('/data', 'nzb', 'nzb-1', 'Release.rar')],
+      [path.join('/data', 'nzb', 'nzb-1', 'work', 'Release.rar')],
       (maxExclusive) => maxExclusive - 1
     );
 
     expect(args.slice(args.indexOf('--groups'), args.indexOf('--groups') + 2)).toEqual([
       '--groups',
       'alt.binaries.three,alt.binaries.two'
+    ]);
+    expect(args.slice(args.indexOf('--out'), args.indexOf('--out') + 2)).toEqual([
+      '--out',
+      path.join('/data', 'nzb', 'nzb-1', 'Release.nzb')
     ]);
   });
 });

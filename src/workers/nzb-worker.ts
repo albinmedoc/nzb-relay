@@ -99,9 +99,9 @@ export class NzbWorker {
   }
 
   private async execute(row: NzbRow, controller: AbortController, isTerminalSuppressed: () => boolean): Promise<void> {
-    const workDir = nzbWorkDir(this.config, row.id);
+    const workDir = nzbWorkDir(this.config, row);
     await fsp.mkdir(workDir, { recursive: true });
-    const logStream = fs.createWriteStream(nzbLogPath(this.config, row.id), { flags: 'a' });
+    const logStream = fs.createWriteStream(nzbLogPath(this.config, row), { flags: 'a' });
 
     try {
       assertUsenetConfigured(this.config);
@@ -174,7 +174,7 @@ export class NzbWorker {
   }
 
   private async stageSymlinks(row: NzbRow, files: NzbFileSummary[]): Promise<string[]> {
-    const workDir = nzbWorkDir(this.config, row.id);
+    const workDir = nzbWorkDir(this.config, row);
     const staged: string[] = [];
     let index = 1;
     for (const file of files) {

@@ -19,7 +19,7 @@ import {
   upsertWatchlistEpisode
 } from '../src/db/watchlist-repository.js';
 import type { WatchlistSourceRow } from '../src/types.js';
-import { fileMediaPath } from '../src/utils/paths.js';
+import { fileMediaPath, nzbLogPath } from '../src/utils/paths.js';
 import { WatchlistWorker } from '../src/workers/watchlist-worker.js';
 import type { WatchProvider, WatchProviderDiscovery } from '../src/watchlist/providers.js';
 import { resolveWatchProvider } from '../src/watchlist/providers.js';
@@ -246,6 +246,12 @@ describe('watchlist worker', () => {
       status: 'nzb_queued',
       nzbAttempts: 1
     });
+    const nzb = getNzb(db, episode!.nzbId!)!;
+    expect(nzb).toMatchObject({
+      releaseName: 'Series.Title.s01e02.svtplay',
+      nzbFile: `${nzb.id}/Series.Title.s01e02.svtplay.nzb`
+    });
+    expect((await fs.stat(nzbLogPath(config, nzb))).isFile()).toBe(true);
     expect((db.prepare('SELECT COUNT(*) AS count FROM nzb').get() as { count: number }).count).toBe(1);
   });
 

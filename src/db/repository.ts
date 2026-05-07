@@ -4,6 +4,7 @@ import type { AppDatabase } from './client.js';
 import type { ErrorCode, FileRow, JobStatus, NzbFileSummary, NzbRow, WebhookDeliveryRow } from '../types.js';
 import { enqueueWebhook } from '../webhooks.js';
 import { nowIso } from '../utils/time.js';
+import { sanitizeToken } from '../utils/templates.js';
 
 export interface CreateFileInput {
   url: string;
@@ -185,7 +186,11 @@ export function transitionFileFailed(
 export function insertNzb(db: AppDatabase, input: CreateNzbInput): NzbRow {
   const id = randomUUID();
   const createdAt = nowIso();
-  const nzbFile = `${id}.nzb`;
+  const releaseName = sanitizeToken(input.releaseName);
+  if (!releaseName) {
+    throw new Error('releaseName is empty');
+  }
+  const nzbFile = `${id}/${releaseName}.nzb`;
 
   db.transaction(() => {
     assertNzbFilesPostable(db, input.fileIds);
@@ -197,7 +202,7 @@ export function insertNzb(db: AppDatabase, input: CreateNzbInput): NzbRow {
         )
         VALUES (?, 'pending', ?, ?, ?, NULL, NULL, NULL)
       `
-    ).run(id, input.releaseName, nzbFile, createdAt);
+    ).run(id, releaseName, nzbFile, createdAt);
 
     const insertJoin = db.prepare('INSERT INTO nzb_files (nzbId, fileId) VALUES (?, ?)');
     for (const fileId of input.fileIds) {

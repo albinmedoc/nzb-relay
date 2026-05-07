@@ -33,8 +33,7 @@ import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
 import {
   renderDownloadFilename,
-  renderSeasonPackReleaseName,
-  renderSingleReleaseName
+  sanitizeToken
 } from '../utils/templates.js';
 import { authMiddleware, requestLoggingMiddleware } from './middleware.js';
 import { errorResponse, isSqliteUniqueConstraint } from './errors.js';
@@ -283,13 +282,8 @@ export function createApp({
     }
 
     const canonical = canonicalizeFiles(fileStateValidation.files);
-    const releaseName =
-      canonical.length === 1
-        ? renderSingleReleaseName(config, canonical[0]!)
-        : renderSeasonPackReleaseName(config, canonical[0]!);
-
     const row = insertNzb(db, {
-      releaseName,
+      releaseName: bodyValidation.name,
       fileIds: canonical.map((file) => file.id)
     });
     await ensureNzbLog(config, row);
@@ -324,7 +318,7 @@ export function createApp({
     if (!row) {
       return errorResponse(c, 404, 'not_found', 'nzb not found');
     }
-    return readTextLog(c, nzbLogPath(config, row.id));
+    return readTextLog(c, nzbLogPath(config, row));
   });
 
   v1.get('/nzb/:nzbId', (c) => {
@@ -514,7 +508,7 @@ function validateDownloadBody(body: Record<string, unknown>):
 }
 
 function validateNzbBody(body: Record<string, unknown>):
-  | { ok: true; fileIds: string[] }
+  | { ok: true; fileIds: string[]; name: string }
   | { ok: false; code: string; error: string } {
   if (!Array.isArray(body.fileIds)) {
     return { ok: false, code: 'empty_list', error: 'fileIds must be a non-empty array' };
@@ -526,7 +520,13 @@ function validateNzbBody(body: Record<string, unknown>):
   if (new Set(fileIds).size !== fileIds.length) {
     return { ok: false, code: 'duplicate_file_id', error: 'fileIds contains a duplicate fileId' };
   }
-  return { ok: true, fileIds };
+
+  const name = typeof body.name === 'string' ? sanitizeToken(body.name) : '';
+  if (!name) {
+    return { ok: false, code: 'invalid_name', error: 'name must be a non-empty release name' };
+  }
+
+  return { ok: true, fileIds, name };
 }
 
 function validateNzbFileStates(db: AppDatabase, fileIds: string[]):
@@ -652,6 +652,6 @@ async function ensureFileLog(config: Config, row: FileRow): Promise<void> {
 }
 
 async function ensureNzbLog(config: Config, row: NzbRow): Promise<void> {
-  await fs.mkdir(path.dirname(nzbLogPath(config, row.id)), { recursive: true });
-  await fs.appendFile(nzbLogPath(config, row.id), '');
+  await fs.mkdir(path.dirname(nzbLogPath(config, row)), { recursive: true });
+  await fs.appendFile(nzbLogPath(config, row), '');
 }

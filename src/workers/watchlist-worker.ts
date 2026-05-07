@@ -31,8 +31,8 @@ import {
 } from '../db/watchlist-repository.js';
 import type { FileRow, NzbRow, WatchlistEpisodeRow, WatchlistEpisodeWithSource, WatchlistSourceRow } from '../types.js';
 import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
-import { fileLogPath, fileMediaPath, nzbLogPath } from '../utils/paths.js';
-import { renderDownloadFilename, renderSingleReleaseName } from '../utils/templates.js';
+import { fileLogPath, fileMediaPath, nzbLogPath, stripMkv } from '../utils/paths.js';
+import { renderDownloadFilename } from '../utils/templates.js';
 import { addMillisecondsIso, nowIso, sleep } from '../utils/time.js';
 import { defaultWatchProviders, type WatchProvider } from '../watchlist/providers.js';
 
@@ -280,7 +280,7 @@ export class WatchlistWorker {
 
       try {
         const row = insertNzb(this.db, {
-          releaseName: renderSingleReleaseName(this.config, file),
+          releaseName: stripMkv(file.filename),
           fileIds: [file.id]
         });
         await ensureNzbLog(this.config, row);
@@ -371,8 +371,8 @@ async function ensureFileLog(config: Config, row: { id: string; filename: string
   await fs.appendFile(logPath, '');
 }
 
-async function ensureNzbLog(config: Config, row: { id: string }): Promise<void> {
-  const logPath = nzbLogPath(config, row.id);
+async function ensureNzbLog(config: Config, row: { nzbFile: string }): Promise<void> {
+  const logPath = nzbLogPath(config, row);
   await fs.mkdir(path.dirname(logPath), { recursive: true });
   await fs.appendFile(logPath, '');
 }

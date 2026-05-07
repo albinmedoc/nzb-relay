@@ -225,11 +225,12 @@ Soft-deleting a referenced file leaves historical NZB rows intact: their `nzb_fi
 #### `POST /nzb`
 Pack the listed files into a RAR + par2 set, post via nyuu, write the NZB to disk. **Async** — returns `202` immediately; completion is reported by webhook.
 
-Body: `{ "fileIds": ["<uuid>", "<uuid>", ...] }` (any non-empty list; one for a single file, many for a season pack).
+Body: `{ "fileIds": ["<uuid>", "<uuid>", ...], "name": "<release-name>" }` (any non-empty file list; one for a single file, many for a season pack). `name` is sanitized and persisted as the NZB/log basename.
 
 - **202**: `{ "nzbId": "<uuid>", "status": "pending" }`
 - **400** `{ "code": "empty_list" }` if `fileIds` is empty.
 - **400** `{ "code": "duplicate_file_id" }` if the same `fileId` appears more than once in `fileIds`. (We treat the array as a set; duplicates would silently collapse otherwise, which is worse than failing loudly.)
+- **400** `{ "code": "invalid_name" }` if `name` is missing or sanitizes to an empty value.
 - **409** if any referenced file is not in a postable state. The `code` field distinguishes the cause so the orchestrator can branch without an extra `GET /v1/files/:id`:
   - `file_missing` — no row exists for that `fileId`.
   - `file_pending` — the file is still in flight (`status = pending` or `running`); retry the POST after `download.completed` fires.
@@ -240,7 +241,7 @@ Body: `{ "fileIds": ["<uuid>", "<uuid>", ...] }` (any non-empty list; one for a 
 - **400** `{ "code": "season_pack_mismatch" }` if `fileIds.length > 1` and the referenced files do not all share the same `title`, `service`, and `season`.
 
 **Validation order** (deterministic so two implementations can't diverge):
-1. Body shape — `empty_list`, `duplicate_file_id`.
+1. Body shape — `empty_list`, `duplicate_file_id`, `invalid_name`.
 2. Existence + state — for each `fileId` in submission order: `file_missing` → `file_pending` → `file_failed` → `file_deleted`. First failure wins.
 3. Cross-file consistency — `season_pack_mismatch` (only meaningful for multi-file submissions).
 
@@ -256,16 +257,15 @@ For a single-file submission the `season_pack_mismatch` check is skipped. Templa
 
 Re-submitting the same `fileIds` is **allowed** and creates a new NZB job (the prior post on Usenet is unaffected). Idempotency is not enforced on `POST /nzb`.
 
-**Release-name derivation** (used as the NZB's `<meta type="name">` and as the basis for nyuu's article subjects):
-- 1 file with `season` + `episode` → render `TEMPLATE_EPISODE` against that file.
-- 1 file without season/episode → render `TEMPLATE_MOVIE` against that file.
-- >1 files → render `TEMPLATE_SEASON_PACK` (default `{title}.s{season}.{service}.{ext}`) against the shared `title`/`season`/`service` (verified by the validation rule above).
+**Release-name derivation** (used as the NZB's `<meta type="name">`, as the basis for nyuu's article subjects, and as the NZB/log basename):
+- API submissions must provide `name`; the service sanitizes and persists that value.
+- Watchlist auto-NZBs use the completed file basename without `.mkv`.
 
-The release name is **computed at submit time** and persisted to `nzb.releaseName` (§4.2). All downstream consumers (the worker pipeline, `GET /v1/nzb/:nzbId/download`'s `Content-Disposition`) read from that column. Caching this way means subsequent soft-deletion of any referenced file does not break NZB retrieval or rendering.
+The release name is persisted to `nzb.releaseName` (§4.2). All downstream consumers (the worker pipeline, `GET /v1/nzb/:nzbId/download`'s `Content-Disposition`) read from that column. Caching this way means subsequent soft-deletion of any referenced file does not break NZB retrieval or rendering.
 
 Release names are **not unique** across NZBs. Re-posts (or coincidental metadata overlap) produce the same release name on the wire — Usenet identifies posts by Message-ID, not by name, so this is harmless. The unique handle within this service is `nzbId`.
 
-The NZB on disk is named `<nzbId>.nzb` regardless of release name; the release name lives inside the NZB metadata and on the wire to Usenet.
+The NZB and log on disk live under `DATA_DIR/nzb/<nzbId>/` as `<releaseName>.nzb` and `<releaseName>.log`. Transient upload staging lives under `DATA_DIR/nzb/<nzbId>/work/`.
 
 #### `GET /nzb`
 Paginated list. Query params: `?limit=20&offset=0` (defaults shown). Sorted newest first by `createdAt`. Each item's nested `files[]` array is returned in canonical order (see §3.4 set-semantics note).
@@ -299,7 +299,7 @@ Returns JSON metadata for an NZB job (does **not** stream the NZB). The `files[]
   {
     "id": "<uuid>",
     "status": "pending | running | completed | failed",
-    "nzbFile": "<filename>.nzb",
+    "nzbFile": "<nzbId>/<releaseName>.nzb",
     "createdAt": "...",
     "postedAt": "2026-05-05T12:34:56Z | null",
     "errorCode": null,
@@ -332,7 +332,7 @@ Returns the upload log (rar + parpar + nyuu output) as `text/plain`. Same status
 Removes the NZB file and log from disk and the row from the DB.
 
 - If `status = "pending"`: nothing to kill; the row is removed and (if any) the log file deleted.
-- If `status = "running"`: kills the active child process (whichever of rar / parpar / nyuu is currently executing — SIGTERM, then SIGKILL after ~1s), removes the staging directory `DATA_DIR/nzb/<nzbId>/`, and removes any partial NZB / log file before deleting the row. As with file DELETE: the NZB worker's terminal `UPDATE` is gated on the row still existing in `running` state, so a hard-deleted row produces a no-op and no `nzb.failed` webhook fires for the user-initiated delete. Articles already accepted by nyuu before the kill cannot be unposted; that's accepted.
+- If `status = "running"`: kills the active child process (whichever of rar / parpar / nyuu is currently executing — SIGTERM, then SIGKILL after ~1s), removes `DATA_DIR/nzb/<nzbId>/`, and removes any partial NZB / log file before deleting the row. As with file DELETE: the NZB worker's terminal `UPDATE` is gated on the row still existing in `running` state, so a hard-deleted row produces a no-op and no `nzb.failed` webhook fires for the user-initiated delete. Articles already accepted by nyuu before the kill cannot be unposted; that's accepted.
 - If `status` is `completed` or `failed`: removes the NZB file and log file from disk and deletes the row.
 - **204** on success.
 - **404** if the row does not exist.
@@ -374,8 +374,8 @@ Indexes:
 |---------------|----------|----------------------------------------------------------|
 | `id`          | TEXT PK  | UUID                                                     |
 | `status`      | TEXT     | `pending` \| `running` \| `completed` \| `failed`        |
-| `releaseName` | TEXT     | Rendered template, computed at `POST /v1/nzb` submit time. Read by the pipeline worker, the NZB metadata, and the download endpoint's `Content-Disposition`. |
-| `nzbFile`     | TEXT     | Filename of generated NZB (relative; always `<id>.nzb`)  |
+| `releaseName` | TEXT     | Sanitized API-provided name or watchlist file basename. Read by the pipeline worker, the NZB metadata, and the download endpoint's `Content-Disposition`. |
+| `nzbFile`     | TEXT     | Path of generated NZB relative to `DATA_DIR/nzb`; new rows use `<id>/<releaseName>.nzb`. |
 | `createdAt`   | TEXT     |                                                          |
 | `postedAt`    | TEXT     | Null until `status = completed`                          |
 | `errorCode`   | TEXT     | Nullable; populated only when `status = failed`. Stable enum from §6.1. |
@@ -441,7 +441,7 @@ If a watchlist NZB fails because its referenced media file is missing, the episo
 
 When the worker transitions a row to `failed` (whether from a child-process error or from §5.5 startup recovery), it removes the entity's working directory:
 - Download: `DATA_DIR/downloads/<fileId>/` (if any partial files were created).
-- NZB: `DATA_DIR/nzb/<nzbId>/` working area; partially uploaded articles already on Usenet cannot be recalled — accept this and mark the row failed anyway.
+- NZB: `DATA_DIR/nzb/<nzbId>/work/` staging area; partially uploaded articles already on Usenet cannot be recalled — accept this and mark the row failed anyway.
 
 The DB row is preserved (with `status = failed`). Deletion is the user's call via `DELETE`.
 
@@ -630,13 +630,14 @@ All paths are under `DATA_DIR` (default `/data`).
       <filename>.mkv                      # the media (after rename)
       <filename>.log                      # svtplay-dl + rename output
   nzb/
-    <nzbId>.nzb                           # generated NZB (final)
-    <nzbId>.log                           # parpar + nyuu output
-    <nzbId>/                              # working directory, removed on success or failure
-      ...rar/par2 staging
+    <nzbId>/
+      <releaseName>.nzb                   # generated NZB (final)
+      <releaseName>.log                   # rar + parpar + nyuu output
+      work/                               # staging directory, removed on success or failure
+        ...rar/par2 staging
 ```
 
-The working directory under `nzb/<nzbId>/` is transient: created at the start of the upload, removed when the job ends regardless of outcome.
+The working directory under `nzb/<nzbId>/work/` is transient: created at the start of the upload and removed when the job ends, except for `insufficient_space` failures where staging is retained for inspection.
 
 ## 9. Pipelines
 
@@ -673,8 +674,8 @@ The log file is the source of truth for human debugging. The DB stores only the 
 
 Per `pending` `nzb` row (after the worker has atomically transitioned it to `running`, §5.1):
 
-1. Read `releaseName` from the row (already computed at submit time per §3.4).
-2. Create the working directory `DATA_DIR/nzb/<nzbId>/` and the log file `DATA_DIR/nzb/<nzbId>.log` (append mode, line-flushed).
+1. Read `releaseName` from the row (persisted per §3.4).
+2. Create the job directory `DATA_DIR/nzb/<nzbId>/`, the working directory `DATA_DIR/nzb/<nzbId>/work/`, and the log file `DATA_DIR/nzb/<nzbId>/<releaseName>.log` (append mode, line-flushed).
 3. **Free-space preflight.** Sum the on-disk size of every referenced mkv (`statvfs`/`fs.statSync` on each `<DATA_DIR>/downloads/<fileId>/<filename>.mkv`). Compute `required = sum × STAGING_MULTIPLIER` (default 2.2 — see §7.1). Compare against `DATA_DIR`'s available bytes. If `available < required`, the job is failed immediately with `errorCode = "insufficient_space"` and `error = "insufficient_space: need <required> bytes, have <available> bytes"`. No password is generated, no child processes spawn, no articles touch the wire. Cleanup runs per §5.4.
 4. **Generate a per-NZB password.** 16 bytes from `crypto.randomBytes(16)`, base64url-encoded. The password lives only in the resulting NZB's `<meta type="password">` element — it is **not** stored in the DB. Re-posting the same `fileIds` produces a fresh password.
 5. **Stage symlinks** to the source mkv files inside the working directory, so rar sees the files at predictable paths without copying. Iterate the joined `nzb_files` rows in canonical order — `ORDER BY file.episode ASC NULLS LAST, file.id ASC` — so the same set of fileIds always produces a byte-identical RAR layout.
@@ -685,7 +686,7 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      -v100m \                                 # 100 MB volumes
      -hp<password> \                          # header encryption (filenames hidden)
      -ed -ep1 \                               # don't store empty dirs / strip leading paths
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.rar \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.rar \
      <staged-files>
    ```
    Output is a multi-volume archive: `<release-name>.rar`, `<release-name>.r00`, `<release-name>.r01`, …
@@ -694,9 +695,9 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
    parpar \
      --input-slices=768000b \                 # block size (matches Usenet article size)
      -r 10% \                                 # 10% redundancy
-     -o <DATA_DIR>/nzb/<nzbId>/<release-name>.par2 \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.rar \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.r* 
+     -o <DATA_DIR>/nzb/<nzbId>/work/<release-name>.par2 \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.rar \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.r*
    ```
    Output: `<release-name>.par2`, `<release-name>.vol000+01.par2`, etc.
 8. **nyuu step** posts every rar + par2 file to Usenet and writes the NZB:
@@ -709,13 +710,13 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      --article-size 750000 \
      --meta name=<release-name> \
      --meta password=<password> \
-     --out <DATA_DIR>/nzb/<nzbId>.nzb \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.rar \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.r* \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.par2 \
-     <DATA_DIR>/nzb/<nzbId>/<release-name>.vol*.par2
+     --out <DATA_DIR>/nzb/<nzbId>/<release-name>.nzb \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.rar \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.r* \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.par2 \
+     <DATA_DIR>/nzb/<nzbId>/work/<release-name>.vol*.par2
    ```
-9. On success of all three steps: update row to `status='completed'`, set `postedAt`, set `nzbFile` to `<nzbId>.nzb`, queue `nzb.completed`. Then remove the working directory `DATA_DIR/nzb/<nzbId>/` (the symlinks and rar/par2 staging). **If cleanup of the working directory fails after a successful post, log a `warn`-level application log line (e.g. `{ event: "nzb.cleanup_failed", nzbId, error }`) and continue.** The NZB status remains `completed` and the `nzb.completed` webhook still fires — the post is on Usenet, the row reflects reality, and a leftover staging directory is operational debris that does not warrant marking the job failed or retrying it.
+9. On success of all three steps: update row to `status='completed'`, set `postedAt`, and queue `nzb.completed`. Then remove the working directory `DATA_DIR/nzb/<nzbId>/work/` (the symlinks and rar/par2 staging). **If cleanup of the working directory fails after a successful post, log a `warn`-level application log line (e.g. `{ event: "nzb.cleanup_failed", nzbId, error }`) and continue.** The NZB status remains `completed` and the `nzb.completed` webhook still fires — the post is on Usenet, the row reflects reality, and a leftover staging directory is operational debris that does not warrant marking the job failed or retrying it.
 10. On any step's failure: update to `status='failed'`, capture the failing tool's last stderr line as `error`, set `errorCode` to the appropriate token from §6.1 (e.g. `child_exit_nonzero` for a non-zero rar/parpar/nyuu exit, `insufficient_space` if the failure is `ENOSPC` mid-run), queue `nzb.failed`, run §5.4 cleanup. Articles already accepted by nyuu before the failure cannot be unposted — that's accepted behaviour; the row is failed regardless.
 
 ### 9.3 Pipeline invariants
@@ -733,11 +734,11 @@ The per-NZB password lives **only** in the NZB file's `<meta type="password">` e
 The narrow trade-off: between `nyuu` completing the post (NZB written, password baked in) and the worker's `running → completed` DB transaction committing, there is a small window. A process crash inside that window leaves:
 
 - **Articles on Usenet** — irreversible; nyuu has already accepted them.
-- **The NZB file at `DATA_DIR/nzb/<nzbId>.nzb`** — present on disk; cleanup (§5.4) only removes the working directory `<nzbId>/`, not the NZB itself.
+- **The NZB file at `DATA_DIR/nzb/<nzbId>/<releaseName>.nzb`** — present on disk; cleanup (§5.4) only removes the working directory `<nzbId>/work/`, not the NZB itself.
 - **The DB row in `running` state** — at the next boot, §5.5 recovery transitions it to `failed`.
 - **No `nzb.completed` webhook** — the atomic invariant in §5.2 means the delivery is only inserted alongside the `completed` transition that never committed; nothing fires.
 
-End state: the NZB on disk is **stranded** from the API's perspective — `GET /v1/nzb/:nzbId/download` returns `409 not_ready` because `status='failed'`, and no orchestrator ever learned the job exists. An operator can still inspect `<nzbId>.nzb` directly on the volume and recover the password manually if the articles are worth retrieving. A subsequent `DELETE /v1/nzb/:nzbId` removes the orphaned file.
+End state: the NZB on disk is **stranded** from the API's perspective — `GET /v1/nzb/:nzbId/download` returns `409 not_ready` because `status='failed'`, and no orchestrator ever learned the job exists. An operator can still inspect `<nzbId>/<releaseName>.nzb` directly on the volume and recover the password manually if the articles are worth retrieving. A subsequent `DELETE /v1/nzb/:nzbId` removes the orphaned file.
 
 This is accepted as the right trade-off: storing the password in the DB to close the window would double its leak surface (backups, logs, future query paths) for a failure mode that should be vanishingly rare on a healthy host. Bandwidth wasted on the unrecoverable post is the cost.
 

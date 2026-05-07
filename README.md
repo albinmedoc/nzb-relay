@@ -65,10 +65,11 @@ All runtime state lives under `DATA_DIR`:
       <filename>.mkv
       <filename>.log
   nzb/
-    <nzbId>.nzb
-    <nzbId>.log
     <nzbId>/
-      transient rar/par2 staging
+      <name>.nzb
+      <name>.log
+      work/
+        transient rar/par2 staging
 ```
 
 Mount `DATA_DIR` as a persistent volume in production.

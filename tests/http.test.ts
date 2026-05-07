@@ -1,7 +1,10 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
-import { getFile, insertFile } from '../src/db/repository.js';
+import { getFile, getNzb, insertFile } from '../src/db/repository.js';
+import { nzbLogPath } from '../src/utils/paths.js';
 import { cleanup, createTempDataDir, createTestApp, createTestDb, testConfig } from './helpers.js';
 
 let dataDir: string;
@@ -159,11 +162,46 @@ describe('http api', () => {
         authorization: 'Bearer secret',
         'content-type': 'application/json'
       },
-      body: JSON.stringify({ fileIds: ['missing-id', failed.id] })
+      body: JSON.stringify({ fileIds: ['missing-id', failed.id], name: 'Title.s01e01.svtplay' })
     });
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: 'file_missing' });
+  });
+
+  it('uses the API NZB name for per-job artifacts', async () => {
+    const file = insertFile(db, {
+      url: 'https://example.test/completed',
+      title: 'Title',
+      filename: 'Title.s01e01.svtplay.mkv',
+      service: 'svtplay',
+      quality: '1080',
+      season: 1,
+      episode: 1
+    });
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+
+    const response = await app.request('/v1/nzb', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ fileIds: [file.id], name: 'Bakom.varje.man.s02.svtplay' })
+    });
+
+    expect(response.status).toBe(202);
+    const { nzbId } = (await response.json()) as { nzbId: string };
+    const nzb = getNzb(db, nzbId)!;
+    expect(nzb).toMatchObject({
+      releaseName: 'Bakom.varje.man.s02.svtplay',
+      nzbFile: `${nzbId}/Bakom.varje.man.s02.svtplay.nzb`
+    });
+    expect(nzbLogPath(config, nzb)).toBe(path.join(config.nzbDir, nzbId, 'Bakom.varje.man.s02.svtplay.log'));
+    expect((await fs.stat(nzbLogPath(config, nzb))).isFile()).toBe(true);
   });
 
   it('soft-deletes files by default and preserves metadata', async () => {
