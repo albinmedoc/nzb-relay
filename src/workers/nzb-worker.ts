@@ -122,15 +122,7 @@ export class NzbWorker {
       ], logStream, controller);
 
       const rarParts = await listMatching(workDir, row.releaseName, /(\.rar|\.r\d+)$/i);
-      await this.runStep(row, 'parpar', [
-        '-s',
-        '768000',
-        '-r',
-        '10%',
-        '-o',
-        path.join(workDir, `${row.releaseName}.par2`),
-        ...rarParts
-      ], logStream, controller);
+      await this.runStep(row, 'parpar', buildParparArgs(workDir, row.releaseName, rarParts), logStream, controller);
 
       const postFiles = [
         ...(await listMatching(workDir, row.releaseName, /(\.rar|\.r\d+|\.par2)$/i))
@@ -277,4 +269,15 @@ function toFileRow(file: NzbFileSummary) {
     errorCode: null,
     error: null
   };
+}
+
+export function buildParparArgs(workDir: string, releaseName: string, rarParts: string[]): string[] {
+  return [
+    '--input-slices=768000b',
+    '-r',
+    '10%',
+    '-o',
+    path.join(workDir, `${releaseName}.par2`),
+    ...rarParts
+  ];
 }

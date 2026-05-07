@@ -691,7 +691,7 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
 7. **parpar step** generates par2 redundancy over the rar volumes:
    ```
    parpar \
-     -s 768000 \                              # block size (matches Usenet article size)
+     --input-slices=768000b \                 # block size (matches Usenet article size)
      -r 10% \                                 # 10% redundancy
      -o <DATA_DIR>/nzb/<nzbId>/<release-name>.par2 \
      <DATA_DIR>/nzb/<nzbId>/<release-name>.rar \
