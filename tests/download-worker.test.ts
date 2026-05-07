@@ -38,6 +38,7 @@ describe('download worker', () => {
 
     expect(buildSvtplayDownloadArgs(config, row)).toEqual([
       '--resolution=1080',
+      '--force',
       '--output-format=mkv',
       '-M',
       '--all-subtitles',

@@ -3,13 +3,17 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import type { Config } from '../config.js';
 import type { AppDatabase } from '../db/client.js';
-import { getFile, insertFile, insertNzb } from '../db/repository.js';
+import { deleteNzb, getFile, hardDeleteFile, insertFile, insertNzb } from '../db/repository.js';
 import {
   downloadQueueCandidates,
   downloadReconcileCandidates,
+  failedFilesByUrl,
+  failedNzbsByFileId,
   getActiveFileByUrl,
+  getActiveNzbByFileId,
   getNzbForWatchlistEpisode,
   linkWatchlistEpisodeToFile,
+  linkWatchlistEpisodeToNzb,
   markWatchlistEpisodeDownloadCompleted,
   markWatchlistEpisodeDownloadFailed,
   markWatchlistEpisodeDownloadQueued,
@@ -25,8 +29,9 @@ import {
   nzbReconcileCandidates,
   upsertWatchlistEpisode
 } from '../db/watchlist-repository.js';
-import type { WatchlistEpisodeRow, WatchlistEpisodeWithSource, WatchlistSourceRow } from '../types.js';
-import { fileLogPath, nzbLogPath } from '../utils/paths.js';
+import type { FileRow, NzbRow, WatchlistEpisodeRow, WatchlistEpisodeWithSource, WatchlistSourceRow } from '../types.js';
+import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
+import { fileLogPath, fileMediaPath, nzbLogPath } from '../utils/paths.js';
 import { renderDownloadFilename, renderSingleReleaseName } from '../utils/templates.js';
 import { addMillisecondsIso, nowIso, sleep } from '../utils/time.js';
 import { defaultWatchProviders, type WatchProvider } from '../watchlist/providers.js';
@@ -148,16 +153,16 @@ export class WatchlistWorker {
   }
 
   private async reconcileAndQueueEpisodes(): Promise<void> {
-    this.reconcileDownloads();
+    await this.reconcileDownloads();
     await this.queueDownloads();
 
     if (this.config.watchlist.autoNzb) {
-      this.reconcileNzbs();
+      await this.reconcileNzbs();
       await this.queueNzbs();
     }
   }
 
-  private reconcileDownloads(): void {
+  private async reconcileDownloads(): Promise<void> {
     for (const episode of downloadReconcileCandidates(this.db)) {
       if (!episode.fileId) {
         this.markDownloadFailure(episode, 'file_missing', 'download file reference is missing');
@@ -172,6 +177,7 @@ export class WatchlistWorker {
 
       if (file.status === 'completed') {
         markWatchlistEpisodeDownloadCompleted(this.db, episode.id, file.downloadedAt ?? nowIso());
+        await this.cleanupFailedDownloadAttempts(episode, file);
         continue;
       }
 
@@ -222,7 +228,7 @@ export class WatchlistWorker {
     }
   }
 
-  private reconcileNzbs(): void {
+  private async reconcileNzbs(): Promise<void> {
     for (const episode of nzbReconcileCandidates(this.db)) {
       const nzb = getNzbForWatchlistEpisode(this.db, episode);
       if (!nzb) {
@@ -232,10 +238,17 @@ export class WatchlistWorker {
 
       if (nzb.status === 'completed') {
         markWatchlistEpisodePosted(this.db, episode.id, nzb.postedAt ?? nowIso());
+        if (episode.fileId) {
+          await this.cleanupFailedNzbsForFile(episode.fileId, nzb.id);
+        }
         continue;
       }
 
       if (nzb.status === 'failed') {
+        if (isMissingMediaNzbFailure(nzb)) {
+          await this.markRedownloadNeededAndCleanup(episode, 'file_media_missing', nzb.error ?? 'download media is missing');
+          continue;
+        }
         this.markNzbFailure(episode, nzb.errorCode ?? 'nzb_failed', nzb.error ?? 'NZB job failed');
       }
     }
@@ -250,7 +263,18 @@ export class WatchlistWorker {
 
       const file = getFile(this.db, episode.fileId);
       if (!file || file.deleted || file.status !== 'completed') {
-        this.markRedownloadNeeded(episode, 'file_not_postable', 'download file is not postable');
+        await this.markRedownloadNeededAndCleanup(episode, 'file_not_postable', 'download file is not postable');
+        continue;
+      }
+
+      if (!(await mediaExists(this.config, file))) {
+        await this.markRedownloadNeededAndCleanup(episode, 'file_media_missing', 'download media is missing');
+        continue;
+      }
+
+      const activeNzb = getActiveNzbByFileId(this.db, file.id);
+      if (activeNzb) {
+        linkWatchlistEpisodeToNzb(this.db, episode.id, activeNzb);
         continue;
       }
 
@@ -289,12 +313,51 @@ export class WatchlistWorker {
     });
   }
 
+  private async markRedownloadNeededAndCleanup(episode: WatchlistEpisodeRow, errorCode: string, error: string): Promise<void> {
+    try {
+      if (episode.fileId) {
+        await this.cleanupFailedNzbsForFile(episode.fileId);
+        const file = getFile(this.db, episode.fileId);
+        if (file && file.status === 'completed') {
+          hardDeleteFile(this.db, file.id);
+          await removeDownloadDirectory(this.config, file);
+        }
+      }
+    } catch (cleanupError) {
+      this.logger.warn({ event: 'watchlist.retry.cleanup_failed', episodeId: episode.id, error: cleanupError }, 'watchlist retry cleanup failed');
+    }
+    this.markRedownloadNeeded(episode, errorCode, error);
+  }
+
   private markNzbFailure(episode: WatchlistEpisodeRow, errorCode: string, error: string): void {
     markWatchlistEpisodeNzbFailed(this.db, episode.id, {
       errorCode,
       error,
       blocked: episode.nzbAttempts >= this.config.watchlist.maxAttempts
     });
+  }
+
+  private async cleanupFailedDownloadAttempts(episode: WatchlistEpisodeRow, currentFile: FileRow): Promise<void> {
+    for (const failed of failedFilesByUrl(this.db, episode.url, currentFile.id)) {
+      try {
+        await this.cleanupFailedNzbsForFile(failed.id);
+        hardDeleteFile(this.db, failed.id);
+        await removeDownloadDirectory(this.config, failed);
+      } catch (error) {
+        this.logger.warn({ event: 'watchlist.failed_file.cleanup_failed', episodeId: episode.id, fileId: failed.id, error }, 'watchlist failed file cleanup failed');
+      }
+    }
+  }
+
+  private async cleanupFailedNzbsForFile(fileId: string, excludeNzbId: string | null = null): Promise<void> {
+    for (const nzb of failedNzbsByFileId(this.db, fileId, excludeNzbId)) {
+      await this.deleteNzbArtifacts(nzb);
+    }
+  }
+
+  private async deleteNzbArtifacts(nzb: NzbRow): Promise<void> {
+    deleteNzb(this.db, nzb.id);
+    await removeNzbArtifacts(this.config, nzb);
   }
 
   private providerFor(source: WatchlistSourceRow): WatchProvider | null {
@@ -312,4 +375,21 @@ async function ensureNzbLog(config: Config, row: { id: string }): Promise<void> 
   const logPath = nzbLogPath(config, row.id);
   await fs.mkdir(path.dirname(logPath), { recursive: true });
   await fs.appendFile(logPath, '');
+}
+
+async function mediaExists(config: Config, file: FileRow): Promise<boolean> {
+  try {
+    await fs.stat(fileMediaPath(config, file));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isMissingMediaNzbFailure(nzb: NzbRow): boolean {
+  const error = nzb.error ?? '';
+  return error.includes('ENOENT') && error.includes('/downloads/');
 }

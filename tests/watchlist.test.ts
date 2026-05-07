@@ -1,7 +1,17 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
-import { claimFile, getFile, insertFile, transitionFileCompleted } from '../src/db/repository.js';
+import {
+  claimFile,
+  getFile,
+  getNzb,
+  insertFile,
+  insertNzb,
+  transitionFileCompleted,
+  transitionFileFailed
+} from '../src/db/repository.js';
 import {
   getWatchlistSource,
   insertWatchlistSource,
@@ -9,6 +19,7 @@ import {
   upsertWatchlistEpisode
 } from '../src/db/watchlist-repository.js';
 import type { WatchlistSourceRow } from '../src/types.js';
+import { fileMediaPath } from '../src/utils/paths.js';
 import { WatchlistWorker } from '../src/workers/watchlist-worker.js';
 import type { WatchProvider, WatchProviderDiscovery } from '../src/watchlist/providers.js';
 import { resolveWatchProvider } from '../src/watchlist/providers.js';
@@ -226,6 +237,7 @@ describe('watchlist worker', () => {
 
     expect(claimFile(db, file.id)).toBe(true);
     expect(transitionFileCompleted(db, config, getFile(db, file.id)!)).toBe(true);
+    await writeMediaFile(file);
 
     await reconcile(worker);
 
@@ -235,6 +247,139 @@ describe('watchlist worker', () => {
       nzbAttempts: 1
     });
     expect((db.prepare('SELECT COUNT(*) AS count FROM nzb').get() as { count: number }).count).toBe(1);
+  });
+
+  it('retries failed watched downloads with a new file row and deletes old failed attempts after success', async () => {
+    const source = insertSource(true);
+    const worker = workerWith(discovery());
+    await scanAndReconcile(worker, source);
+    const [firstQueued] = listWatchlistEpisodesForSource(db, source.id);
+    const firstFile = getFile(db, firstQueued!.fileId!)!;
+
+    expect(claimFile(db, firstFile.id)).toBe(true);
+    expect(transitionFileFailed(db, config, getFile(db, firstFile.id)!, 'child_exit_nonzero', 'failed')).toBe(true);
+
+    await reconcile(worker);
+
+    const [retryQueued] = listWatchlistEpisodesForSource(db, source.id);
+    expect(retryQueued).toMatchObject({
+      status: 'download_queued',
+      downloadAttempts: 2
+    });
+    expect(retryQueued!.fileId).not.toBe(firstFile.id);
+    expect(getFile(db, firstFile.id)).toMatchObject({ status: 'failed' });
+
+    const retryFile = getFile(db, retryQueued!.fileId!)!;
+    expect(claimFile(db, retryFile.id)).toBe(true);
+    expect(transitionFileCompleted(db, config, getFile(db, retryFile.id)!)).toBe(true);
+    await writeMediaFile(retryFile);
+
+    await reconcile(worker);
+
+    expect(getFile(db, firstFile.id)).toBeNull();
+    expect(getFile(db, retryFile.id)).toMatchObject({ status: 'completed' });
+  });
+
+  it('moves missing-media NZB failures back to download retry state', async () => {
+    const source = insertSource(true);
+    const worker = workerWith(discovery());
+    await scanAndReconcile(worker, source);
+    const [queued] = listWatchlistEpisodesForSource(db, source.id);
+    const file = getFile(db, queued!.fileId!)!;
+
+    expect(claimFile(db, file.id)).toBe(true);
+    expect(transitionFileCompleted(db, config, getFile(db, file.id)!)).toBe(true);
+    const nzb = insertNzb(db, {
+      releaseName: 'Series.Title.s01e02.svtplay.mkv',
+      fileIds: [file.id]
+    });
+    db.prepare("UPDATE nzb SET status = 'failed', errorCode = 'unknown', error = ? WHERE id = ?").run(
+      `ENOENT: no such file or directory, stat '${fileMediaPath(config, file)}'`,
+      nzb.id
+    );
+    db.prepare("UPDATE watchlist_episode SET status = 'nzb_queued', nzbId = ? WHERE id = ?").run(nzb.id, queued!.id);
+
+    await reconcile(worker);
+
+    const [needsRetry] = listWatchlistEpisodesForSource(db, source.id);
+    expect(needsRetry).toMatchObject({
+      status: 'download_failed',
+      fileId: null,
+      nzbId: null,
+      lastErrorCode: 'file_media_missing'
+    });
+    expect(getFile(db, file.id)).toBeNull();
+    expect(getNzb(db, nzb.id)).toBeNull();
+  });
+
+  it('links an existing active NZB instead of creating a duplicate', async () => {
+    const source = insertSource(true);
+    const worker = workerWith(discovery());
+    await scanAndReconcile(worker, source);
+    const [queued] = listWatchlistEpisodesForSource(db, source.id);
+    const file = getFile(db, queued!.fileId!)!;
+    await writeMediaFile(file);
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    db.prepare("UPDATE watchlist_episode SET status = 'download_completed', downloadedAt = ?, fileId = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id,
+      queued!.id
+    );
+    const activeNzb = insertNzb(db, {
+      releaseName: 'Series.Title.s01e02.svtplay.mkv',
+      fileIds: [file.id]
+    });
+
+    await reconcile(worker);
+
+    const [episode] = listWatchlistEpisodesForSource(db, source.id);
+    expect(episode).toMatchObject({
+      status: 'nzb_queued',
+      nzbId: activeNzb.id,
+      nzbAttempts: 0
+    });
+    expect((db.prepare('SELECT COUNT(*) AS count FROM nzb').get() as { count: number }).count).toBe(1);
+  });
+
+  it('deletes older failed NZB attempts after a later post succeeds', async () => {
+    const source = insertSource(true);
+    const worker = workerWith(discovery());
+    await scanAndReconcile(worker, source);
+    const [queued] = listWatchlistEpisodesForSource(db, source.id);
+    const file = getFile(db, queued!.fileId!)!;
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const failedNzb = insertNzb(db, {
+      releaseName: 'Series.Title.s01e02.svtplay.mkv',
+      fileIds: [file.id]
+    });
+    db.prepare("UPDATE nzb SET status = 'failed', errorCode = 'child_exit_nonzero', error = 'failed' WHERE id = ?").run(
+      failedNzb.id
+    );
+    const postedNzb = insertNzb(db, {
+      releaseName: 'Series.Title.s01e02.svtplay.mkv',
+      fileIds: [file.id]
+    });
+    db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:01:00.000Z',
+      postedNzb.id
+    );
+    db.prepare("UPDATE watchlist_episode SET status = 'nzb_queued', fileId = ?, nzbId = ? WHERE id = ?").run(
+      file.id,
+      postedNzb.id,
+      queued!.id
+    );
+
+    await reconcile(worker);
+
+    expect(getNzb(db, failedNzb.id)).toBeNull();
+    expect(getNzb(db, postedNzb.id)).toMatchObject({ status: 'completed' });
+    expect(listWatchlistEpisodesForSource(db, source.id)).toMatchObject([{ status: 'posted' }]);
   });
 
   it('does not queue NZBs when auto NZB is disabled', async () => {
@@ -358,4 +503,10 @@ async function scan(worker: WatchlistWorker, source: WatchlistSourceRow): Promis
 
 async function reconcile(worker: WatchlistWorker): Promise<void> {
   await (worker as unknown as { reconcileAndQueueEpisodes(): Promise<void> }).reconcileAndQueueEpisodes();
+}
+
+async function writeMediaFile(file: { id: string; filename: string }): Promise<void> {
+  const mediaPath = path.join(config.downloadsDir, file.id, file.filename);
+  await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+  await fs.writeFile(mediaPath, 'media');
 }

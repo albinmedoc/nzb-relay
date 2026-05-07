@@ -434,6 +434,8 @@ The terminal `UPDATE` is gated on `WHERE id=? AND status='running'` (and additio
 2. Partial unique index (see §4.1) protects against two requests racing past the application check.
 
 `failed` rows do **not** block retries — that allows recovery from a transient svtplay-dl failure without manual cleanup.
+For watchlist-managed work, retries create fresh job rows and the episode pointer moves to the newest active attempt. Once a later download succeeds, older failed download rows for that episode URL are hard-deleted after any failed NZBs that reference them are removed. Once a later NZB posts, older failed NZB rows for that episode file are hard-deleted.
+If a watchlist NZB fails because its referenced media file is missing, the episode is moved back to download retry state instead of consuming further NZB attempts.
 
 ### 5.4 Cleanup on failure
 
@@ -649,6 +651,7 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
    ```
    svtplay-dl \
      --resolution=<quality> \
+     --force \
      --output-format=mkv \
      -M \
      --all-subtitles \
@@ -657,6 +660,7 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
      <url>
    ```
    - `--output-format=mkv` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
+   - `--force` lets svtplay-dl overwrite stale intermediate files left by interrupted downloads.
    - `-M --all-subtitles` merges every available subtitle track into the mkv.
    - `--output` is the per-file download directory; `--filename` controls the final media basename.
 4. On exit code 0: verify `<DATA_DIR>/downloads/<fileId>/<filename>.mkv` exists, then update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).

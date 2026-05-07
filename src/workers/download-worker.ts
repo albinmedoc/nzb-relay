@@ -105,6 +105,7 @@ export class DownloadWorker {
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
     try {
+      await removeDownloadPartialsKeepLog(this.config, row);
       logStream.write(`starting svtplay-dl for ${row.url}\n`);
       const result = await runLoggedProcess({
         command: 'svtplay-dl',
@@ -159,6 +160,7 @@ export class DownloadWorker {
 export function buildSvtplayDownloadArgs(config: Config, row: FileRow): string[] {
   return [
     `--resolution=${row.quality}`,
+    '--force',
     '--output-format=mkv',
     '-M',
     '--all-subtitles',

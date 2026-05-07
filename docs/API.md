@@ -78,6 +78,8 @@ Status codes:
 
 The watchlist is provider-neutral, but currently only SVT Play series URLs are supported.
 The app polls watched sources, records discovered episodes, queues missing downloads, and can automatically queue one NZB per completed episode.
+Watchlist retries create new file/NZB job rows while an episode is failing, then remove older failed attempts once a later download or NZB succeeds.
+If an NZB fails because the completed media file is missing, the episode is moved back to download retry state.
 
 Environment knobs:
 

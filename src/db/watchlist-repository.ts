@@ -363,6 +363,21 @@ export function markWatchlistEpisodeNzbQueued(
   ).run(nzbId, timestamp, timestamp, episodeId);
 }
 
+export function linkWatchlistEpisodeToNzb(
+  db: AppDatabase,
+  episodeId: string,
+  nzb: NzbRow,
+  timestamp = nowIso()
+): void {
+  db.prepare(
+    `
+      UPDATE watchlist_episode
+      SET status = 'nzb_queued', nzbId = ?, nzbQueuedAt = ?, lastErrorCode = NULL, lastError = NULL, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(nzb.id, timestamp, timestamp, episodeId);
+}
+
 export function markWatchlistEpisodePosted(
   db: AppDatabase,
   episodeId: string,
@@ -408,6 +423,21 @@ export function markWatchlistEpisodeNeedsRedownload(
   ).run(input.blocked ? 'blocked' : 'download_failed', input.errorCode, input.error, timestamp, episodeId);
 }
 
+export function failedFilesByUrl(db: AppDatabase, url: string, excludeFileId: string): FileRow[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM file
+        WHERE url = ?
+          AND id <> ?
+          AND status = 'failed'
+        ORDER BY createdAt ASC
+      `
+    )
+    .all(url, excludeFileId) as FileRow[];
+}
+
 export function getActiveFileByUrl(db: AppDatabase, url: string): FileRow | null {
   return (
     (db
@@ -424,6 +454,40 @@ export function getActiveFileByUrl(db: AppDatabase, url: string): FileRow | null
       )
       .get(url) as FileRow | undefined) ?? null
   );
+}
+
+export function getActiveNzbByFileId(db: AppDatabase, fileId: string): NzbRow | null {
+  return (
+    (db
+      .prepare(
+        `
+          SELECT n.*
+          FROM nzb n
+          JOIN nzb_files nf ON nf.nzbId = n.id
+          WHERE nf.fileId = ?
+            AND n.status IN ('pending', 'running')
+          ORDER BY n.createdAt ASC
+          LIMIT 1
+        `
+      )
+      .get(fileId) as NzbRow | undefined) ?? null
+  );
+}
+
+export function failedNzbsByFileId(db: AppDatabase, fileId: string, excludeNzbId: string | null = null): NzbRow[] {
+  return db
+    .prepare(
+      `
+        SELECT n.*
+        FROM nzb n
+        JOIN nzb_files nf ON nf.nzbId = n.id
+        WHERE nf.fileId = ?
+          AND n.status = 'failed'
+          AND (? IS NULL OR n.id <> ?)
+        ORDER BY n.createdAt ASC
+      `
+    )
+    .all(fileId, excludeNzbId, excludeNzbId) as NzbRow[];
 }
 
 export function getNzbForWatchlistEpisode(db: AppDatabase, episode: WatchlistEpisodeRow): NzbRow | null {
