@@ -49,7 +49,7 @@ At minimum, set:
 - `USENET_PASS`
 - `WEBHOOK_URL` or event-specific webhook URLs, if you want notifications
 
-`USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups and can be set to a comma-separated list to override them.
+`USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups and can be set to a comma-separated list to override them. `USENET_NEWSGROUPS_PER_UPLOAD` defaults to `20`; each upload randomly picks that many groups so providers with a 20-group crosspost limit do not reject posts.
 
 The service listens on `http://localhost:3001` by default. Health is available at:
 

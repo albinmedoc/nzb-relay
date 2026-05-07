@@ -30,6 +30,7 @@ export interface Config {
     user: string;
     pass: string;
     newsgroups: string[];
+    newsgroupsPerUpload: number;
   };
   webhooks: {
     defaultUrl: string;
@@ -107,7 +108,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ssl: readBool(env.USENET_SSL, true),
       user: env.USENET_USER ?? '',
       pass: env.USENET_PASS ?? '',
-      newsgroups: readNewsgroups(env)
+      newsgroups: readNewsgroups(env),
+      newsgroupsPerUpload: readPositiveInt(env.USENET_NEWSGROUPS_PER_UPLOAD, 20, 'USENET_NEWSGROUPS_PER_UPLOAD')
     },
     webhooks: {
       defaultUrl: env.WEBHOOK_URL ?? '',

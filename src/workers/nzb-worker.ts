@@ -21,6 +21,8 @@ import { fileMediaPath, nzbFinalPath, nzbLogPath, nzbWorkDir } from '../utils/pa
 import { sleep } from '../utils/time.js';
 import type { ErrorCode, NzbFileSummary, NzbRow } from '../types.js';
 
+type RandomInt = (maxExclusive: number) => number;
+
 interface ActiveNzb {
   id: string;
   controller: AbortController;
@@ -127,28 +129,7 @@ export class NzbWorker {
       const postFiles = [
         ...(await listMatching(workDir, row.releaseName, /(\.rar|\.r\d+|\.par2)$/i))
       ];
-      await this.runStep(row, 'nyuu', [
-        '--host',
-        this.config.usenet.host,
-        '--port',
-        String(this.config.usenet.port),
-        ...(this.config.usenet.ssl ? ['--ssl'] : []),
-        '--user',
-        this.config.usenet.user,
-        '--password',
-        this.config.usenet.pass,
-        '--groups',
-        this.config.usenet.newsgroups.join(','),
-        '--article-size',
-        '750000',
-        '--meta',
-        `name=${row.releaseName}`,
-        '--meta',
-        `password=${password}`,
-        '--out',
-        nzbFinalPath(this.config, row),
-        ...postFiles
-      ], logStream, controller);
+      await this.runStep(row, 'nyuu', buildNyuuArgs(this.config, row, password, postFiles), logStream, controller);
 
       transitionNzbCompleted(this.db, this.config, row);
 
@@ -280,4 +261,55 @@ export function buildParparArgs(workDir: string, releaseName: string, rarParts: 
     path.join(workDir, `${releaseName}.par2`),
     ...rarParts
   ];
+}
+
+export function buildNyuuArgs(
+  config: Config,
+  row: Pick<NzbRow, 'releaseName' | 'nzbFile'>,
+  password: string,
+  postFiles: string[],
+  randomInt?: RandomInt
+): string[] {
+  return [
+    '--host',
+    config.usenet.host,
+    '--port',
+    String(config.usenet.port),
+    ...(config.usenet.ssl ? ['--ssl'] : []),
+    '--user',
+    config.usenet.user,
+    '--password',
+    config.usenet.pass,
+    '--groups',
+    newsgroupsForUpload(config, randomInt).join(','),
+    '--article-size',
+    '750000',
+    '--meta',
+    `name=${row.releaseName}`,
+    '--meta',
+    `password=${password}`,
+    '--out',
+    nzbFinalPath(config, row),
+    ...postFiles
+  ];
+}
+
+export function newsgroupsForUpload(
+  config: Config,
+  randomInt: RandomInt = (maxExclusive) => crypto.randomInt(maxExclusive)
+): string[] {
+  const remaining = [...config.usenet.newsgroups];
+  const selected: string[] = [];
+  const limit = Math.min(config.usenet.newsgroupsPerUpload, remaining.length);
+
+  while (selected.length < limit) {
+    const index = randomInt(remaining.length);
+    const [newsgroup] = remaining.splice(index, 1);
+    if (newsgroup == null) {
+      throw new Error('random newsgroup selection returned an invalid index');
+    }
+    selected.push(newsgroup);
+  }
+
+  return selected;
 }

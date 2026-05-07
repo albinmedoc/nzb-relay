@@ -52,7 +52,7 @@ pnpm test
 
 ## Run Locally
 
-The application requires Usenet server credentials at startup. `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups, and can be set to a comma-separated list to override them.
+The application requires Usenet server credentials at startup. `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups, and can be set to a comma-separated list to override them. `USENET_NEWSGROUPS_PER_UPLOAD` defaults to `20`; each upload randomly picks that many groups.
 
 ```sh
 DATA_DIR=./data \

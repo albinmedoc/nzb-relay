@@ -20,3 +20,4 @@ services:
       USENET_USER: "usenet-user"
       USENET_PASS: "usenet-password"
       USENET_NEWSGROUPS: "alt.binaries.example,alt.binaries.misc"
+      USENET_NEWSGROUPS_PER_UPLOAD: "20"

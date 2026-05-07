@@ -572,8 +572,9 @@ Substitutions: `{title}`, `{service}`, `{quality}`, `{season}` (zero-padded to 2
 | `USENET_USER` | yes | — | NNTP username |
 | `USENET_PASS` | yes | — | NNTP password |
 | `USENET_NEWSGROUPS` | no | See below | Comma-separated newsgroups to publish articles to |
+| `USENET_NEWSGROUPS_PER_UPLOAD` | no | `20` | Maximum number of configured newsgroups to use for each `nyuu` upload. Set higher only if the NNTP server allows that many crossposts. |
 
-Default `USENET_NEWSGROUPS`:
+Default `USENET_NEWSGROUPS` is the full list below. Each upload randomly chooses up to `USENET_NEWSGROUPS_PER_UPLOAD` entries from that list.
 
 ```text
 alt.binaries.newznzb.alpha
@@ -704,7 +705,7 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      --host <USENET_HOST> --port <USENET_PORT> \
      # pass --ssl only when USENET_SSL=true
      --user <USENET_USER> --password <USENET_PASS> \
-     --groups <USENET_NEWSGROUPS> \
+     --groups <random USENET_NEWSGROUPS_PER_UPLOAD entries from USENET_NEWSGROUPS> \
      --article-size 750000 \
      --meta name=<release-name> \
      --meta password=<password> \

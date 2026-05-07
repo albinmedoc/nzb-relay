@@ -41,6 +41,7 @@ describe('config and templates', () => {
 
     expect(config.port).toBe(3001);
     expect(config.usenet.newsgroups).toEqual(DEFAULT_USENET_NEWSGROUPS);
+    expect(config.usenet.newsgroupsPerUpload).toBe(20);
     expect(resolveWebhookUrl(config, 'download.completed')).toBe('https://example.test/all');
     expect(resolveWebhookUrl(config, 'nzb.failed')).toBe('https://example.test/nzb-failed');
   });
@@ -63,6 +64,13 @@ describe('config and templates', () => {
         USENET_RELEASE_GROUP: 'alt.binaries.legacy'
       }).usenet.newsgroups
     ).toEqual(['alt.binaries.tv', 'alt.binaries.misc']);
+  });
+
+  it('loads and validates the per-upload newsgroup count', () => {
+    expect(loadConfig({ USENET_NEWSGROUPS_PER_UPLOAD: '3' }).usenet.newsgroupsPerUpload).toBe(3);
+    expect(() => loadConfig({ USENET_NEWSGROUPS_PER_UPLOAD: '0' })).toThrow(
+      'USENET_NEWSGROUPS_PER_UPLOAD must be a positive integer'
+    );
   });
 
   it('uses the default newsgroups when validating Usenet config', () => {
