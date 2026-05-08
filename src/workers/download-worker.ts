@@ -122,6 +122,10 @@ export class DownloadWorker {
 
       if (result.code === 0) {
         await ensureDownloadedMediaAtExpectedPath(this.config, row, logStream);
+        await removeDownloadSidecars(this.config, row, logStream).catch((error) => {
+          logStream.write(`download sidecar cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`);
+          this.logger.warn({ event: 'download.sidecar_cleanup_failed', fileId: row.id, error }, 'download sidecar cleanup failed');
+        });
         logStream.write(`completed ${row.filename}\n`);
         transitionFileCompleted(this.db, this.config, row);
         return;
@@ -162,6 +166,7 @@ export function buildSvtplayDownloadArgs(config: Config, row: FileRow): string[]
     `--resolution=${row.quality}`,
     '--force',
     '--output-format=mkv',
+    '--subtitle',
     '-M',
     '--all-subtitles',
     `--output=${downloadDir(config, row.id)}`,
@@ -212,4 +217,31 @@ async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<
   return entries
     .filter((entry) => /\.(mkv|mp4)$/i.test(entry))
     .map((entry) => path.join(dir, entry));
+}
+
+export async function removeDownloadSidecars(
+  config: Config,
+  row: Pick<FileRow, 'id' | 'filename'>,
+  logStream: Pick<fs.WriteStream, 'write'>
+): Promise<void> {
+  const dir = downloadDir(config, row.id);
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+
+  const keep = new Set([row.filename, path.basename(fileLogPath(config, row))]);
+  const sidecars = entries.filter((entry) => !keep.has(entry));
+
+  await Promise.all(
+    sidecars.map(async (entry) => {
+      await fsp.rm(path.join(dir, entry), { force: true });
+      logStream.write(`removed download sidecar ${entry}\n`);
+    })
+  );
 }

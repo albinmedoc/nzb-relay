@@ -655,6 +655,7 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
      --resolution=<quality> \
      --force \
      --output-format=mkv \
+     --subtitle \
      -M \
      --all-subtitles \
      --output=<DATA_DIR>/downloads/<fileId> \
@@ -663,9 +664,9 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
    ```
    - `--output-format=mkv` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
    - `--force` lets svtplay-dl overwrite stale intermediate files left by interrupted downloads.
-   - `-M --all-subtitles` merges every available subtitle track into the mkv.
+   - `--subtitle -M --all-subtitles` downloads every available subtitle track and merges them into the mkv. Explicit subtitle download works around `svtplay-dl` subtitle merge failures where it later tries to inspect a removed `.srt` sidecar.
    - `--output` is the per-file download directory; `--filename` controls the final media basename.
-4. On exit code 0: verify `<DATA_DIR>/downloads/<fileId>/<filename>.mkv` exists, then update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).
+4. On exit code 0: verify `<DATA_DIR>/downloads/<fileId>/<filename>.mkv` exists, remove every file in the download directory except the mkv and log, then update the row to `status='completed'`, set `downloadedAt`, queue the `download.completed` delivery (atomically, §5.2).
 5. On non-zero exit, signal-kill, or spawn error: update to `status='failed'`, set `error` to the last line of stderr (truncated to 200 chars), set `errorCode` per §6.1 (typically `child_exit_nonzero`; use `insufficient_space` if the worker detects `ENOSPC` while writing the mkv), queue `download.failed`, run §5.4 cleanup.
 
 The log file is the source of truth for human debugging. The DB stores only the one-line summary.
