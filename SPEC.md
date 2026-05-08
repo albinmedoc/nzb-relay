@@ -777,11 +777,11 @@ See §5.6.
 
 ### 10.5 Container packaging
 
-Reference deployment uses `node:20-slim` as the base image. Required additions:
+Reference deployment uses `node:${NODE_VERSION}-slim` as the base image for both build and runtime stages. `NODE_VERSION` defaults in the Dockerfile `ARG`, which Renovate tracks through the inline metadata comment. Required additions:
 
-- **`python3` + `pip`** via `apt-get install -y python3 python3-pip`, then `pip install --break-system-packages svtplay-dl` (Debian 12+ requires the flag).
+- **`python3` + temporary `pip`** via `apt-get install -y python3 python3-pip`, then `pip install --break-system-packages svtplay-dl==$SVTPLAY_DL_VERSION` (Debian 12+ requires the flag). `SVTPLAY_DL_VERSION` defaults in the Dockerfile `ARG`, which Renovate tracks through the inline metadata comment; `latest` is accepted for ad-hoc builds. `python3-pip` is removed after installation to reduce runtime image size.
 - **`ffmpeg`** via `apt-get install -y ffmpeg` (needed by `svtplay-dl --output-format=mkv`).
-- **`nyuu` + `@animetosho/parpar`** via `npm install -g nyuu @animetosho/parpar`.
+- **`nyuu` + `@animetosho/parpar`** via `npm install -g --omit=dev nyuu @animetosho/parpar`. Temporary build packages such as `make` and `g++` are removed after installation.
 - **`rar`** is non-free and not packaged in Debian's main repositories. The image's `entrypoint.sh` downloads the official RAR binary on first start. Pin the version in the entrypoint:
   ```sh
   # entrypoint.sh

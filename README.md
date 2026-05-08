@@ -10,7 +10,8 @@
 
 The service has no UI. It can monitor supported series itself through the watchlist API, or be driven by an external orchestrator such as n8n, cron-backed scripts, or another REST client.
 
-For the HTTP contract, see [docs/API.md](docs/API.md). An optional n8n setup is documented in
+For the HTTP contract, see [docs/API.md](docs/API.md). Runtime configuration is documented in
+[docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). An optional n8n setup is documented in
 [docs/N8N_SVTPLAY.md](docs/N8N_SVTPLAY.md).
 
 ## What It Does
@@ -33,6 +34,17 @@ RAR is proprietary and the official RARLAB command-line Linux package is availab
 
 The container downloads the pinned RAR binary on first start if `/usr/local/bin/rar` is missing.
 
+The Docker image pins Node.js and `svtplay-dl` at build time. To build with different versions:
+
+```sh
+docker build \
+  --build-arg NODE_VERSION=20.20.2 \
+  --build-arg SVTPLAY_DL_VERSION=4.179 \
+  -t nzb-relay .
+```
+
+Use `SVTPLAY_DL_VERSION=latest` only for ad-hoc testing; release images should use the explicit defaults in the Dockerfile. Renovate updates those Dockerfile `ARG` values through the inline `renovate` metadata comments.
+
 ## Quick Start With Docker Compose
 
 Copy [docker-compose.yaml](docker-compose.yaml), edit the environment variables, then run:
@@ -48,6 +60,8 @@ At minimum, set:
 - `USENET_USER`
 - `USENET_PASS`
 - `WEBHOOK_URL` or event-specific webhook URLs, if you want notifications
+
+See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) for the full list of supported environment variables and parsing rules.
 
 `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups and can be set to a comma-separated list to override them. `USENET_NEWSGROUPS_PER_UPLOAD` defaults to `20`; each upload randomly picks that many groups so providers with a 20-group crosspost limit do not reject posts.
 
