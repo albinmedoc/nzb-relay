@@ -27,16 +27,20 @@ export function requestLoggingMiddleware(logger: Logger): MiddlewareHandler {
   return async (c, next) => {
     const requestId = crypto.randomUUID();
     c.set('requestId', requestId);
+    const path = new URL(c.req.url).pathname;
     const started = performance.now();
 
     try {
       await next();
     } finally {
       c.header('x-request-id', requestId);
+      if (path === '/v1/health') {
+        return;
+      }
       logger.info(
         {
           method: c.req.method,
-          path: new URL(c.req.url).pathname,
+          path,
           status: c.res.status,
           durationMs: Math.round(performance.now() - started),
           requestId
@@ -56,4 +60,3 @@ function timingSafeEqual(a: string, b: string): boolean {
   }
   return crypto.timingSafeEqual(left, right);
 }
-

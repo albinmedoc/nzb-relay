@@ -1,9 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Hono } from 'hono';
+import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
 import { getFile, getNzb, insertFile, insertNzb } from '../src/db/repository.js';
+import { requestLoggingMiddleware } from '../src/http/middleware.js';
 import { nzbLogPath } from '../src/utils/paths.js';
 import { cleanup, createTempDataDir, createTestApp, createTestDb, testConfig } from './helpers.js';
 
@@ -45,6 +48,27 @@ describe('http api', () => {
       headers: { authorization: 'Bearer secret' }
     });
     expect(authorized.status).toBe(200);
+  });
+
+  it('omits request logs for health checks', async () => {
+    const logs: Array<{ path: string }> = [];
+    const logger = {
+      info(fields: { path: string }) {
+        logs.push(fields);
+      }
+    } as Logger;
+    const loggingApp = new Hono();
+    loggingApp.use('*', requestLoggingMiddleware(logger));
+    loggingApp.get('/v1/health', (c) => c.json({ status: 'ok' }));
+    loggingApp.get('/v1/files', (c) => c.json({ items: [] }));
+
+    const health = await loggingApp.request('/v1/health');
+    const files = await loggingApp.request('/v1/files');
+
+    expect(health.status).toBe(200);
+    expect(health.headers.get('x-request-id')).toEqual(expect.any(String));
+    expect(files.status).toBe(200);
+    expect(logs.map((entry) => entry.path)).toEqual(['/v1/files']);
   });
 
   it('filters files by status and inclusive createdAt bounds', async () => {
