@@ -151,6 +151,14 @@ Filenames do not need to be globally unique: each download lives in its own per-
 #### `GET /files`
 Paginated list. Query params: `?limit=20&offset=0` (defaults shown). Sorted newest first by `createdAt`. Soft-deleted rows are excluded by default.
 
+Optional filters:
+
+- `status=pending|running|completed|failed`
+- `createdAfter=<datetime>` — inclusive lower bound (`createdAt >= createdAfter`)
+- `createdBefore=<datetime>` — inclusive upper bound (`createdAt <= createdBefore`)
+
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
+
 - **200**:
   ```json
   {
@@ -269,6 +277,14 @@ The NZB and log on disk live under `DATA_DIR/nzb/<nzbId>/` as `<releaseName>.nzb
 
 #### `GET /nzb`
 Paginated list. Query params: `?limit=20&offset=0` (defaults shown). Sorted newest first by `createdAt`. Each item's nested `files[]` array is returned in canonical order (see §3.4 set-semantics note).
+
+Optional filters:
+
+- `status=pending|running|completed|failed`
+- `createdAfter=<datetime>` — inclusive lower bound (`createdAt >= createdAfter`)
+- `createdBefore=<datetime>` — inclusive upper bound (`createdAt <= createdBefore`)
+
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
 
 - **200**:
   ```json

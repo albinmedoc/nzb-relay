@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { Hono, type Context } from 'hono';
 import type { Logger } from 'pino';
+import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { AppDatabase } from '../db/client.js';
 import {
@@ -20,6 +21,7 @@ import {
   listNzbs,
   markFileDeleted
 } from '../db/repository.js';
+import type { JobListFilters } from '../db/repository.js';
 import {
   deleteWatchlistSource,
   getWatchlistSource,
@@ -27,7 +29,7 @@ import {
   listWatchlistEpisodesForSource,
   listWatchlistSources
 } from '../db/watchlist-repository.js';
-import type { FileRow, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
+import type { FileRow, JobStatus, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
 import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
 import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
@@ -134,17 +136,12 @@ export function createApp({
       return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
     }
 
-    const url = stringField(body.value.url);
-    if (!url) {
-      return errorResponse(c, 400, 'missing_required_param', 'missing required parameter');
+    const validation = validateWatchlistBody(body.value);
+    if (!validation.ok) {
+      return errorResponse(c, 400, validation.code, validation.error);
     }
 
-    const backfillValidation = optionalBoolean(body.value.backfill);
-    if (!backfillValidation.ok) {
-      return errorResponse(c, 400, 'invalid_backfill', 'backfill must be a boolean');
-    }
-
-    const resolved = resolveWatchProvider(url, watchProviders);
+    const resolved = resolveWatchProvider(validation.value.url, watchProviders);
     if (!resolved) {
       return errorResponse(c, 400, 'unsupported_watch_url', 'watch URL is not supported');
     }
@@ -154,7 +151,7 @@ export function createApp({
         service: resolved.provider.service,
         type: resolved.provider.type,
         url: resolved.normalizedUrl,
-        backfill: backfillValidation.value ?? true
+        backfill: validation.value.backfill
       });
       return c.json(serializeWatchlistSource(row), 201);
     } catch (error) {
@@ -198,8 +195,12 @@ export function createApp({
   });
 
   v1.get('/files', (c) => {
-    const { limit, offset } = parsePagination(c);
-    const result = listFiles(db, limit, offset);
+    const params = parseListParams(c);
+    if (!params.ok) {
+      return errorResponse(c, 400, params.code, params.error);
+    }
+    const { limit, offset, filters } = params.value;
+    const result = listFiles(db, limit, offset, filters);
     return c.json({
       items: result.items.map(serializeFile),
       total: result.total,
@@ -292,8 +293,12 @@ export function createApp({
   });
 
   v1.get('/nzb', (c) => {
-    const { limit, offset } = parsePagination(c);
-    const result = listNzbs(db, limit, offset);
+    const params = parseListParams(c);
+    if (!params.ok) {
+      return errorResponse(c, 400, params.code, params.error);
+    }
+    const { limit, offset, filters } = params.value;
+    const result = listNzbs(db, limit, offset, filters);
     return c.json({
       items: result.items.map((row) => serializeNzb(db, row)),
       total: result.total,
@@ -441,16 +446,28 @@ function serializeWatchlistEpisode(row: WatchlistEpisodeRow) {
   };
 }
 
+const jsonObjectSchema = z.record(z.string(), z.unknown());
+const nonEmptyStringSchema = z.string().trim().min(1);
+const optionalEpisodeNumberSchema = z.number().int().nullable().optional();
+const jobStatusSchema: z.ZodType<JobStatus> = z.enum(['pending', 'running', 'completed', 'failed']);
+const paginationQuerySchema = z
+  .object({
+    limit: z.string().optional().transform((value) => clampParsedInt(value, 20, 1, 100)),
+    offset: z.string().optional().transform((value) => clampParsedInt(value, 0, 0, Number.MAX_SAFE_INTEGER))
+  })
+  .passthrough();
+
 async function readJsonObject(c: Context): Promise<
   | { ok: true; value: Record<string, unknown> }
   | { ok: false }
 > {
   try {
     const value = (await c.req.json()) as unknown;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    const parsed = jsonObjectSchema.safeParse(value);
+    if (!parsed.success) {
       return { ok: false };
     }
-    return { ok: true, value: value as Record<string, unknown> };
+    return { ok: true, value: parsed.data };
   } catch {
     return { ok: false };
   }
@@ -469,54 +486,81 @@ function validateDownloadBody(body: Record<string, unknown>):
       };
     }
   | { ok: false; code: string; error: string } {
-  const url = stringField(body.url);
-  const title = stringField(body.title);
-  const service = stringField(body.service);
-  const quality = stringField(body.quality);
-  if (!url || !title || !service || !quality) {
+  const required = z
+    .object({
+      url: nonEmptyStringSchema,
+      title: nonEmptyStringSchema,
+      service: nonEmptyStringSchema,
+      quality: nonEmptyStringSchema
+    })
+    .passthrough()
+    .safeParse(body);
+  if (!required.success) {
     return { ok: false, code: 'missing_required_param', error: 'missing required parameter' };
   }
   try {
-    new URL(url);
+    new URL(required.data.url);
   } catch {
     return { ok: false, code: 'malformed_url', error: 'url is malformed' };
   }
-  if (!/^\d{3,4}$/.test(quality)) {
+  if (!/^\d{3,4}$/.test(required.data.quality)) {
     return { ok: false, code: 'malformed_quality', error: 'quality is malformed' };
   }
 
-  const season = optionalInteger(body.season);
-  const episode = optionalInteger(body.episode);
-  if (!season.ok || !episode.ok) {
+  const episodeMetadata = z
+    .object({
+      season: optionalEpisodeNumberSchema,
+      episode: optionalEpisodeNumberSchema
+    })
+    .passthrough()
+    .safeParse(body);
+  if (!episodeMetadata.success) {
     return { ok: false, code: 'invalid_episode_metadata', error: 'season and episode must be integers' };
   }
-  if ((season.value == null) !== (episode.value == null)) {
+  const season = episodeMetadata.data.season ?? null;
+  const episode = episodeMetadata.data.episode ?? null;
+  if ((season == null) !== (episode == null)) {
     return { ok: false, code: 'partial_episode_metadata', error: 'season and episode must both be present or both absent' };
   }
 
   return {
     ok: true,
     value: {
-      url,
-      title,
-      service,
-      quality,
-      season: season.value,
-      episode: episode.value
+      url: required.data.url,
+      title: required.data.title,
+      service: required.data.service,
+      quality: required.data.quality,
+      season,
+      episode
     }
   };
+}
+
+function validateWatchlistBody(body: Record<string, unknown>):
+  | { ok: true; value: { url: string; backfill: boolean } }
+  | { ok: false; code: string; error: string } {
+  const url = nonEmptyStringSchema.safeParse(body.url);
+  if (!url.success) {
+    return { ok: false, code: 'missing_required_param', error: 'missing required parameter' };
+  }
+
+  const backfill = z.boolean().nullish().safeParse(body.backfill);
+  if (!backfill.success) {
+    return { ok: false, code: 'invalid_backfill', error: 'backfill must be a boolean' };
+  }
+
+  return { ok: true, value: { url: url.data, backfill: backfill.data ?? true } };
 }
 
 function validateNzbBody(body: Record<string, unknown>):
   | { ok: true; fileIds: string[]; name: string }
   | { ok: false; code: string; error: string } {
-  if (!Array.isArray(body.fileIds)) {
+  const fileIdsValidation = z.array(nonEmptyStringSchema).safeParse(body.fileIds);
+  if (!fileIdsValidation.success || fileIdsValidation.data.length === 0) {
     return { ok: false, code: 'empty_list', error: 'fileIds must be a non-empty array' };
   }
-  const fileIds = body.fileIds.filter((value): value is string => typeof value === 'string' && value.length > 0);
-  if (fileIds.length === 0 || fileIds.length !== body.fileIds.length) {
-    return { ok: false, code: 'empty_list', error: 'fileIds must be a non-empty array of strings' };
-  }
+
+  const fileIds = fileIdsValidation.data;
   if (new Set(fileIds).size !== fileIds.length) {
     return { ok: false, code: 'duplicate_file_id', error: 'fileIds contains a duplicate fileId' };
   }
@@ -580,12 +624,66 @@ function canonicalizeFiles<T extends { episode: number | null; id: string }>(fil
 }
 
 function parsePagination(c: Context): { limit: number; offset: number } {
-  const limit = clampInt(c.req.query('limit'), 20, 1, 100);
-  const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
-  return { limit, offset };
+  return paginationQuerySchema.parse({
+    limit: c.req.query('limit'),
+    offset: c.req.query('offset')
+  });
 }
 
-function clampInt(value: string | undefined, fallback: number, min: number, max: number): number {
+function parseListParams(c: Context):
+  | { ok: true; value: { limit: number; offset: number; filters: JobListFilters } }
+  | { ok: false; code: string; error: string } {
+  const { limit, offset } = parsePagination(c);
+  const status = c.req.query('status');
+  const createdAfter = c.req.query('createdAfter');
+  const createdBefore = c.req.query('createdBefore');
+  const filters: JobListFilters = {};
+
+  if (status != null) {
+    const statusValidation = jobStatusSchema.safeParse(status);
+    if (!statusValidation.success) {
+      return { ok: false, code: 'invalid_status', error: 'status must be pending, running, completed, or failed' };
+    }
+    filters.status = statusValidation.data;
+  }
+
+  if (createdAfter != null) {
+    const createdAfterValidation = parseDateQuery(createdAfter);
+    if (!createdAfterValidation.ok) {
+      return { ok: false, code: 'invalid_created_after', error: 'createdAfter must be a valid datetime' };
+    }
+    filters.createdAfter = createdAfterValidation.value;
+  }
+
+  if (createdBefore != null) {
+    const createdBeforeValidation = parseDateQuery(createdBefore);
+    if (!createdBeforeValidation.ok) {
+      return { ok: false, code: 'invalid_created_before', error: 'createdBefore must be a valid datetime' };
+    }
+    filters.createdBefore = createdBeforeValidation.value;
+  }
+
+  if (filters.createdAfter && filters.createdBefore && filters.createdAfter > filters.createdBefore) {
+    return { ok: false, code: 'invalid_created_range', error: 'createdAfter must be before or equal to createdBefore' };
+  }
+
+  return { ok: true, value: { limit, offset, filters } };
+}
+
+function parseDateQuery(value: string): { ok: true; value: string } | { ok: false } {
+  const parsed = z
+    .string()
+    .trim()
+    .min(1)
+    .refine((candidate) => !Number.isNaN(Date.parse(candidate)))
+    .safeParse(value);
+  if (!parsed.success) {
+    return { ok: false };
+  }
+  return { ok: true, value: new Date(parsed.data).toISOString() };
+}
+
+function clampParsedInt(value: string | undefined, fallback: number, min: number, max: number): number {
   if (!value) {
     return fallback;
   }
@@ -594,30 +692,6 @@ function clampInt(value: string | undefined, fallback: number, min: number, max:
     return fallback;
   }
   return Math.min(Math.max(parsed, min), max);
-}
-
-function stringField(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function optionalInteger(value: unknown): { ok: true; value: number | null } | { ok: false } {
-  if (value == null) {
-    return { ok: true, value: null };
-  }
-  if (Number.isInteger(value)) {
-    return { ok: true, value: value as number };
-  }
-  return { ok: false };
-}
-
-function optionalBoolean(value: unknown): { ok: true; value: boolean | null } | { ok: false } {
-  if (value == null) {
-    return { ok: true, value: null };
-  }
-  if (typeof value === 'boolean') {
-    return { ok: true, value };
-  }
-  return { ok: false };
 }
 
 async function streamFile(c: Context, filePath: string, contentType: string, filename: string): Promise<Response> {

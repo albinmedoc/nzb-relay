@@ -21,6 +21,12 @@ export interface CreateNzbInput {
   fileIds: string[];
 }
 
+export interface JobListFilters {
+  status?: JobStatus;
+  createdAfter?: string;
+  createdBefore?: string;
+}
+
 export function insertFile(db: AppDatabase, input: CreateFileInput): FileRow {
   const id = randomUUID();
   const createdAt = nowIso();
@@ -65,19 +71,25 @@ export function getFileOrThrow(db: AppDatabase, id: string): FileRow {
   return row;
 }
 
-export function listFiles(db: AppDatabase, limit: number, offset: number): { items: FileRow[]; total: number } {
+export function listFiles(
+  db: AppDatabase,
+  limit: number,
+  offset: number,
+  filters: JobListFilters = {}
+): { items: FileRow[]; total: number } {
+  const { where, params } = buildJobListWhere(filters, ['deleted = 0']);
   const items = db
     .prepare(
       `
         SELECT *
         FROM file
-        WHERE deleted = 0
+        ${where}
         ORDER BY createdAt DESC
         LIMIT ? OFFSET ?
       `
     )
-    .all(limit, offset) as FileRow[];
-  const total = (db.prepare('SELECT COUNT(*) AS total FROM file WHERE deleted = 0').get() as { total: number }).total;
+    .all(...params, limit, offset) as FileRow[];
+  const total = (db.prepare(`SELECT COUNT(*) AS total FROM file ${where}`).get(...params) as { total: number }).total;
   return { items, total };
 }
 
@@ -244,19 +256,52 @@ export function deleteNzb(db: AppDatabase, id: string): void {
   db.prepare('DELETE FROM nzb WHERE id = ?').run(id);
 }
 
-export function listNzbs(db: AppDatabase, limit: number, offset: number): { items: NzbRow[]; total: number } {
+export function listNzbs(
+  db: AppDatabase,
+  limit: number,
+  offset: number,
+  filters: JobListFilters = {}
+): { items: NzbRow[]; total: number } {
+  const { where, params } = buildJobListWhere(filters);
   const items = db
     .prepare(
       `
         SELECT *
         FROM nzb
+        ${where}
         ORDER BY createdAt DESC
         LIMIT ? OFFSET ?
       `
     )
-    .all(limit, offset) as NzbRow[];
-  const total = (db.prepare('SELECT COUNT(*) AS total FROM nzb').get() as { total: number }).total;
+    .all(...params, limit, offset) as NzbRow[];
+  const total = (db.prepare(`SELECT COUNT(*) AS total FROM nzb ${where}`).get(...params) as { total: number }).total;
   return { items, total };
+}
+
+function buildJobListWhere(
+  filters: JobListFilters,
+  baseClauses: string[] = []
+): { where: string; params: Array<string | number> } {
+  const clauses = [...baseClauses];
+  const params: Array<string | number> = [];
+
+  if (filters.status) {
+    clauses.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.createdAfter) {
+    clauses.push('createdAt >= ?');
+    params.push(filters.createdAfter);
+  }
+  if (filters.createdBefore) {
+    clauses.push('createdAt <= ?');
+    params.push(filters.createdBefore);
+  }
+
+  return {
+    where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    params
+  };
 }
 
 export function nextPendingNzb(db: AppDatabase): NzbRow | null {

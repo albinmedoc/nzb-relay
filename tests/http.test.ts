@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
-import { getFile, getNzb, insertFile } from '../src/db/repository.js';
+import { getFile, getNzb, insertFile, insertNzb } from '../src/db/repository.js';
 import { nzbLogPath } from '../src/utils/paths.js';
 import { cleanup, createTempDataDir, createTestApp, createTestDb, testConfig } from './helpers.js';
 
@@ -45,6 +45,122 @@ describe('http api', () => {
       headers: { authorization: 'Bearer secret' }
     });
     expect(authorized.status).toBe(200);
+  });
+
+  it('filters files by status and inclusive createdAt bounds', async () => {
+    const pending = createFile('https://example.test/pending');
+    const completed = createFile('https://example.test/completed');
+    const failed = createFile('https://example.test/failed');
+    db.prepare("UPDATE file SET status = 'pending', createdAt = ? WHERE id = ?").run('2026-05-01T00:00:00.000Z', pending.id);
+    db.prepare("UPDATE file SET status = 'completed', createdAt = ? WHERE id = ?").run(
+      '2026-05-02T00:00:00.000Z',
+      completed.id
+    );
+    db.prepare("UPDATE file SET status = 'failed', createdAt = ? WHERE id = ?").run('2026-05-03T00:00:00.000Z', failed.id);
+
+    const byStatus = await app.request('/v1/files?status=completed', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(byStatus.status).toBe(200);
+    expect(await byStatus.json()).toMatchObject({
+      total: 1,
+      items: [{ id: completed.id, status: 'completed' }]
+    });
+
+    const byDate = await app.request(
+      '/v1/files?createdAfter=2026-05-02T00:00:00.000Z&createdBefore=2026-05-03T00:00:00.000Z',
+      { headers: { authorization: 'Bearer secret' } }
+    );
+    expect(byDate.status).toBe(200);
+    expect(await byDate.json()).toMatchObject({
+      total: 2,
+      items: [{ id: failed.id }, { id: completed.id }]
+    });
+
+    const combined = await app.request('/v1/files?status=completed&createdAfter=2026-05-02T00:00:00.000Z', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(combined.status).toBe(200);
+    expect(await combined.json()).toMatchObject({
+      total: 1,
+      items: [{ id: completed.id }]
+    });
+  });
+
+  it('rejects invalid file filters', async () => {
+    const invalidStatus = await app.request('/v1/files?status=bogus', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(invalidStatus.status).toBe(400);
+    expect(await invalidStatus.json()).toMatchObject({ code: 'invalid_status' });
+
+    const invalidDate = await app.request('/v1/files?createdAfter=not-a-date', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(invalidDate.status).toBe(400);
+    expect(await invalidDate.json()).toMatchObject({ code: 'invalid_created_after' });
+
+    const invalidRange = await app.request(
+      '/v1/files?createdAfter=2026-05-03T00:00:00.000Z&createdBefore=2026-05-02T00:00:00.000Z',
+      { headers: { authorization: 'Bearer secret' } }
+    );
+    expect(invalidRange.status).toBe(400);
+    expect(await invalidRange.json()).toMatchObject({ code: 'invalid_created_range' });
+  });
+
+  it('filters NZBs by status and inclusive createdAt bounds', async () => {
+    const file = createFile('https://example.test/nzb-source');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-01T00:00:00.000Z',
+      file.id
+    );
+
+    const pending = insertNzb(db, { releaseName: 'Pending', fileIds: [file.id] });
+    const completed = insertNzb(db, { releaseName: 'Completed', fileIds: [file.id] });
+    const failed = insertNzb(db, { releaseName: 'Failed', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'pending', createdAt = ? WHERE id = ?").run('2026-05-01T00:00:00.000Z', pending.id);
+    db.prepare("UPDATE nzb SET status = 'completed', createdAt = ?, postedAt = ? WHERE id = ?").run(
+      '2026-05-02T00:00:00.000Z',
+      '2026-05-02T01:00:00.000Z',
+      completed.id
+    );
+    db.prepare("UPDATE nzb SET status = 'failed', createdAt = ?, errorCode = 'unknown', error = 'failed' WHERE id = ?").run(
+      '2026-05-03T00:00:00.000Z',
+      failed.id
+    );
+
+    const byStatus = await app.request('/v1/nzb?status=completed', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(byStatus.status).toBe(200);
+    expect(await byStatus.json()).toMatchObject({
+      total: 1,
+      items: [{ id: completed.id, status: 'completed', files: [{ id: file.id }] }]
+    });
+
+    const byDate = await app.request(
+      '/v1/nzb?createdAfter=2026-05-02T00:00:00.000Z&createdBefore=2026-05-03T00:00:00.000Z',
+      { headers: { authorization: 'Bearer secret' } }
+    );
+    expect(byDate.status).toBe(200);
+    expect(await byDate.json()).toMatchObject({
+      total: 2,
+      items: [{ id: failed.id }, { id: completed.id }]
+    });
+  });
+
+  it('rejects invalid NZB filters', async () => {
+    const invalidStatus = await app.request('/v1/nzb?status=bogus', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(invalidStatus.status).toBe(400);
+    expect(await invalidStatus.json()).toMatchObject({ code: 'invalid_status' });
+
+    const invalidDate = await app.request('/v1/nzb?createdBefore=not-a-date', {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(invalidDate.status).toBe(400);
+    expect(await invalidDate.json()).toMatchObject({ code: 'invalid_created_before' });
   });
 
   it('uses the JSON error envelope for unknown routes', async () => {
@@ -269,5 +385,17 @@ function postDownload(body: Record<string, unknown>) {
       'content-type': 'application/json'
     },
     body: JSON.stringify(body)
+  });
+}
+
+function createFile(url: string) {
+  return insertFile(db, {
+    url,
+    title: 'Title',
+    filename: 'Title.svtplay.mkv',
+    service: 'svtplay',
+    quality: '1080',
+    season: null,
+    episode: null
   });
 }

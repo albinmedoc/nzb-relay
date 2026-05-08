@@ -150,6 +150,11 @@ Query parameters:
 
 - `limit`, default `20`, max `100`
 - `offset`, default `0`
+- `status`, one of `pending`, `running`, `completed`, `failed`
+- `createdAfter`, valid datetime, inclusive `createdAt >= createdAfter`
+- `createdBefore`, valid datetime, inclusive `createdAt <= createdBefore`
+
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
 
 Response:
 
@@ -275,6 +280,11 @@ Query parameters:
 
 - `limit`, default `20`, max `100`
 - `offset`, default `0`
+- `status`, one of `pending`, `running`, `completed`, `failed`
+- `createdAfter`, valid datetime, inclusive `createdAt >= createdAfter`
+- `createdBefore`, valid datetime, inclusive `createdAt <= createdBefore`
+
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
 
 Response:
 
