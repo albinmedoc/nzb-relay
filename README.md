@@ -18,6 +18,7 @@ For the HTTP contract, see [docs/API.md](docs/API.md). Runtime configuration is 
 
 - Accepts async download jobs over HTTP.
 - Monitors watched SVT Play series and queues newly discovered episodes.
+- Can soft-delete watchlist downloads automatically after their NZB upload completes.
 - Stores every job in SQLite with a deterministic lifecycle: `pending -> running -> completed | failed`.
 - Runs watchlist, download, NZB upload, and webhook workers.
 - Persists generated media, NZB files, and logs under one `DATA_DIR`.

@@ -68,7 +68,8 @@ describe('watchlist API', () => {
       service: 'tv4play',
       type: 'series',
       url: 'https://example.test/show',
-      backfill: true
+      backfill: true,
+      deleteFileAfterNzb: true
     });
 
     const duplicate = await app.request('/v1/watchlist', {
@@ -156,6 +157,32 @@ describe('watchlist API', () => {
       downloadAttempts: 1
     });
     expect(retried!.fileId).not.toBe(failedFile.id);
+  });
+
+  it('honors deleteFileAfterNzb when creating a watchlist source', async () => {
+    const provider = fakeProvider({
+      service: 'tv4play',
+      type: 'series',
+      url: 'https://delete-disabled.example.test/show',
+      title: 'Show',
+      episodes: []
+    });
+    const app = createTestApp(db, config, undefined, undefined, [provider]);
+
+    const created = await app.request('/v1/watchlist', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ url: 'https://delete-disabled.example.test/show', deleteFileAfterNzb: false })
+    });
+
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      url: 'https://delete-disabled.example.test/show',
+      deleteFileAfterNzb: false
+    });
   });
 
   it('retries failed source episodes so NZBs can be queued again', async () => {
@@ -509,6 +536,40 @@ describe('watchlist worker', () => {
 
     expect(getNzb(db, failedNzb.id)).toBeNull();
     expect(getNzb(db, postedNzb.id)).toMatchObject({ status: 'completed' });
+    expect(getFile(db, file.id)).toMatchObject({ status: 'completed', deleted: 1 });
+    await expect(fs.stat(path.join(config.downloadsDir, file.id))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(listWatchlistEpisodesForSource(db, source.id)).toMatchObject([{ status: 'posted' }]);
+  });
+
+  it('keeps watched files after a posted NZB when source cleanup is disabled', async () => {
+    const source = insertSource(true, false);
+    const worker = workerWith(discovery());
+    await scanAndReconcile(worker, source);
+    const [queued] = listWatchlistEpisodesForSource(db, source.id);
+    const file = getFile(db, queued!.fileId!)!;
+    await writeMediaFile(file);
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const postedNzb = insertNzb(db, {
+      releaseName: 'Series.Title.s01e02.svtplay.mkv',
+      fileIds: [file.id]
+    });
+    db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:01:00.000Z',
+      postedNzb.id
+    );
+    db.prepare("UPDATE watchlist_episode SET status = 'nzb_queued', fileId = ?, nzbId = ? WHERE id = ?").run(
+      file.id,
+      postedNzb.id,
+      queued!.id
+    );
+
+    await reconcile(worker);
+
+    expect(getFile(db, file.id)).toMatchObject({ status: 'completed', deleted: 0 });
+    expect((await fs.stat(fileMediaPath(config, file))).isFile()).toBe(true);
     expect(listWatchlistEpisodesForSource(db, source.id)).toMatchObject([{ status: 'posted' }]);
   });
 
@@ -564,12 +625,13 @@ describe('watchlist worker', () => {
   });
 });
 
-function insertSource(backfill: boolean) {
+function insertSource(backfill: boolean, deleteFileAfterNzb = true) {
   return insertWatchlistSource(db, {
     service: 'svtplay',
     type: 'series',
     url: 'https://example.test/source',
-    backfill
+    backfill,
+    deleteFileAfterNzb
   });
 }
 

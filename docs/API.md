@@ -81,6 +81,7 @@ The app polls watched sources, records discovered episodes, queues missing downl
 Watchlist retries create new file/NZB job rows while an episode is failing, then remove older failed attempts once a later download or NZB succeeds.
 If an NZB fails because the completed media file is missing, the episode is moved back to download retry state.
 Auto-queued watchlist NZBs use the completed media filename basename for the NZB/log basename, for example `Show.s01e02.svtplay.mkv` becomes `Show.s01e02.svtplay.nzb`.
+By default, watchlist sources soft-delete downloaded files after their NZB upload completes. The watchlist episode remains `posted`, the file row remains as deleted history, and the download artifacts are removed from disk.
 
 Environment knobs:
 
@@ -98,7 +99,8 @@ Request:
 ```json
 {
   "url": "https://www.svtplay.se/30-grader-i-februari",
-  "backfill": true
+  "backfill": true,
+  "deleteFileAfterNzb": true
 }
 ```
 
@@ -109,8 +111,10 @@ Required fields:
 Optional fields:
 
 - `backfill`, default `true`
+- `deleteFileAfterNzb`, default `true`
 
 When `backfill=false`, the first successful scan records currently available episodes as `seen` without queueing them. Episodes first discovered on later scans are queued normally.
+When `deleteFileAfterNzb=true`, watchlist-owned downloaded files are soft-deleted after their NZB upload completes. This does not apply to manually submitted NZB jobs.
 
 Response:
 
@@ -123,6 +127,7 @@ Response:
   "title": null,
   "enabled": true,
   "backfill": true,
+  "deleteFileAfterNzb": true,
   "firstScanCompleted": false,
   "lastScannedAt": null,
   "nextScanAt": "2026-05-06T12:00:00.000Z",
@@ -139,6 +144,7 @@ Status codes:
 - `400 invalid_json`
 - `400 missing_required_param`
 - `400 invalid_backfill`
+- `400 invalid_delete_file_after_nzb`
 - `400 unsupported_watch_url`
 - `409 duplicate_watch_url`
 
@@ -169,6 +175,7 @@ Response:
       "title": "30 grader i februari",
       "enabled": true,
       "backfill": true,
+      "deleteFileAfterNzb": true,
       "firstScanCompleted": true,
       "lastScannedAt": "2026-05-06T12:00:00.000Z",
       "nextScanAt": "2026-05-06T13:00:00.000Z",

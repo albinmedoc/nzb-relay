@@ -53,6 +53,7 @@ The application is designed for one process per `DATA_DIR`. A second process usi
 ## Watchlist
 
 The watchlist worker polls supported series sources, records discovered episodes, queues downloads, and can automatically queue NZB jobs after downloads complete.
+New watchlist sources default to soft-deleting downloaded files after their NZB upload completes. This is controlled per source with the `deleteFileAfterNzb` watchlist API field.
 
 | Variable | Required | Default | Description |
 |---|---:|---|---|
@@ -169,4 +170,3 @@ These variables are not part of normal application configuration, but they appea
 | `NODE_VERSION` | Docker image build metadata | Dockerfile `ARG` default | Build argument used in the `node:<version>-slim` base image tag for both build and runtime stages. Renovate tracks the Dockerfile `ARG` through the inline metadata comment. |
 | `NODE_ENV` | Docker image / Node ecosystem | `production` in the runtime image | Set by the Dockerfile. The application code does not branch on it directly. |
 | `SVTPLAY_DL_VERSION` | Docker image build/runtime metadata | Dockerfile `ARG` default | Build argument used to pin the installed `svtplay-dl` package version. The value is also exposed as an environment variable in the built image for inspection. Use `latest` only for ad-hoc testing. |
-

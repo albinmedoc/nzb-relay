@@ -450,7 +450,7 @@ The terminal `UPDATE` is gated on `WHERE id=? AND status='running'` (and additio
 2. Partial unique index (see §4.1) protects against two requests racing past the application check.
 
 `failed` rows do **not** block retries — that allows recovery from a transient svtplay-dl failure without manual cleanup.
-For watchlist-managed work, retries create fresh job rows and the episode pointer moves to the newest active attempt. Once a later download succeeds, older failed download rows for that episode URL are hard-deleted after any failed NZBs that reference them are removed. Once a later NZB posts, older failed NZB rows for that episode file are hard-deleted.
+For watchlist-managed work, retries create fresh job rows and the episode pointer moves to the newest active attempt. Once a later download succeeds, older failed download rows for that episode URL are hard-deleted after any failed NZBs that reference them are removed. Once a later NZB posts, older failed NZB rows for that episode file are hard-deleted. Watchlist sources default to soft-deleting the completed download after the episode's NZB posts; this can be disabled per source.
 If a watchlist NZB fails because its referenced media file is missing, the episode is moved back to download retry state instead of consuming further NZB attempts.
 
 ### 5.4 Cleanup on failure

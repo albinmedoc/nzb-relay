@@ -72,6 +72,7 @@ export interface WatchlistSourceRow {
   title: string | null;
   enabled: number;
   backfill: number;
+  deleteFileAfterNzb: number;
   firstScanCompleted: number;
   lastScannedAt: string | null;
   nextScanAt: string | null;

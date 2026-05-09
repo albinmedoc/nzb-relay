@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import type { Config } from '../config.js';
 import type { AppDatabase } from '../db/client.js';
-import { deleteNzb, getFile, hardDeleteFile, insertFile, insertNzb } from '../db/repository.js';
+import { deleteNzb, getFile, hardDeleteFile, insertFile, insertNzb, markFileDeleted } from '../db/repository.js';
 import {
   downloadQueueCandidates,
   downloadReconcileCandidates,
@@ -12,6 +12,7 @@ import {
   getActiveFileByUrl,
   getActiveNzbByFileId,
   getNzbForWatchlistEpisode,
+  getWatchlistSource,
   linkWatchlistEpisodeToFile,
   linkWatchlistEpisodeToNzb,
   markWatchlistEpisodeDownloadCompleted,
@@ -240,6 +241,7 @@ export class WatchlistWorker {
         markWatchlistEpisodePosted(this.db, episode.id, nzb.postedAt ?? nowIso());
         if (episode.fileId) {
           await this.cleanupFailedNzbsForFile(episode.fileId, nzb.id);
+          await this.deleteFileAfterNzbIfEnabled(episode);
         }
         continue;
       }
@@ -358,6 +360,21 @@ export class WatchlistWorker {
   private async deleteNzbArtifacts(nzb: NzbRow): Promise<void> {
     deleteNzb(this.db, nzb.id);
     await removeNzbArtifacts(this.config, nzb);
+  }
+
+  private async deleteFileAfterNzbIfEnabled(episode: WatchlistEpisodeRow): Promise<void> {
+    const source = getWatchlistSource(this.db, episode.sourceId);
+    if (!source?.deleteFileAfterNzb || !episode.fileId) {
+      return;
+    }
+
+    const file = getFile(this.db, episode.fileId);
+    if (!file || file.deleted) {
+      return;
+    }
+
+    markFileDeleted(this.db, file.id);
+    await removeDownloadDirectory(this.config, file);
   }
 
   private providerFor(source: WatchlistSourceRow): WatchProvider | null {

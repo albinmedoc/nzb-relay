@@ -87,6 +87,7 @@ export const watchlistSource = sqliteTable(
     title: text('title'),
     enabled: integer('enabled').notNull().default(1),
     backfill: integer('backfill').notNull().default(1),
+    deleteFileAfterNzb: integer('deleteFileAfterNzb').notNull().default(1),
     firstScanCompleted: integer('firstScanCompleted').notNull().default(0),
     lastScannedAt: text('lastScannedAt'),
     nextScanAt: text('nextScanAt'),

@@ -154,7 +154,8 @@ export function createApp({
         service: resolved.provider.service,
         type: resolved.provider.type,
         url: resolved.normalizedUrl,
-        backfill: validation.value.backfill
+        backfill: validation.value.backfill,
+        deleteFileAfterNzb: validation.value.deleteFileAfterNzb
       });
       return c.json(serializeWatchlistSource(row), 201);
     } catch (error) {
@@ -458,6 +459,7 @@ function serializeWatchlistSource(row: WatchlistSourceRow) {
     title: row.title,
     enabled: Boolean(row.enabled),
     backfill: Boolean(row.backfill),
+    deleteFileAfterNzb: Boolean(row.deleteFileAfterNzb),
     firstScanCompleted: Boolean(row.firstScanCompleted),
     lastScannedAt: row.lastScannedAt,
     nextScanAt: row.nextScanAt,
@@ -594,7 +596,7 @@ function validateDownloadBody(body: Record<string, unknown>):
 }
 
 function validateWatchlistBody(body: Record<string, unknown>):
-  | { ok: true; value: { url: string; backfill: boolean } }
+  | { ok: true; value: { url: string; backfill: boolean; deleteFileAfterNzb: boolean } }
   | { ok: false; code: string; error: string } {
   const url = nonEmptyStringSchema.safeParse(body.url);
   if (!url.success) {
@@ -606,7 +608,19 @@ function validateWatchlistBody(body: Record<string, unknown>):
     return { ok: false, code: 'invalid_backfill', error: 'backfill must be a boolean' };
   }
 
-  return { ok: true, value: { url: url.data, backfill: backfill.data ?? true } };
+  const deleteFileAfterNzb = z.boolean().nullish().safeParse(body.deleteFileAfterNzb);
+  if (!deleteFileAfterNzb.success) {
+    return { ok: false, code: 'invalid_delete_file_after_nzb', error: 'deleteFileAfterNzb must be a boolean' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      url: url.data,
+      backfill: backfill.data ?? true,
+      deleteFileAfterNzb: deleteFileAfterNzb.data ?? true
+    }
+  };
 }
 
 function validateNzbBody(body: Record<string, unknown>):

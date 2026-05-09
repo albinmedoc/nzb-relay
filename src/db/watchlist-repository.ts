@@ -17,6 +17,7 @@ export interface CreateWatchlistSourceInput {
   type: WatchlistSourceType;
   url: string;
   backfill: boolean;
+  deleteFileAfterNzb?: boolean;
 }
 
 export interface DiscoveredWatchlistEpisodeInput {
@@ -35,12 +36,22 @@ export function insertWatchlistSource(db: AppDatabase, input: CreateWatchlistSou
   db.prepare(
     `
       INSERT INTO watchlist_source (
-        id, service, type, url, title, enabled, backfill, firstScanCompleted,
+        id, service, type, url, title, enabled, backfill, deleteFileAfterNzb, firstScanCompleted,
         lastScannedAt, nextScanAt, lastErrorCode, lastError, createdAt, updatedAt
       )
-      VALUES (?, ?, ?, ?, NULL, 1, ?, 0, NULL, ?, NULL, NULL, ?, ?)
+      VALUES (?, ?, ?, ?, NULL, 1, ?, ?, 0, NULL, ?, NULL, NULL, ?, ?)
     `
-  ).run(id, input.service, input.type, input.url, input.backfill ? 1 : 0, timestamp, timestamp, timestamp);
+  ).run(
+    id,
+    input.service,
+    input.type,
+    input.url,
+    input.backfill ? 1 : 0,
+    (input.deleteFileAfterNzb ?? true) ? 1 : 0,
+    timestamp,
+    timestamp,
+    timestamp
+  );
 
   return getWatchlistSourceOrThrow(db, id);
 }
