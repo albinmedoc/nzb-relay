@@ -106,6 +106,130 @@ describe('watchlist API', () => {
     expect(getWatchlistSource(db, source.id)).toBeNull();
   });
 
+  it('retries failed source episodes so downloads can be queued again', async () => {
+    const source = insertSource(true);
+    const { row: episode } = upsertWatchlistEpisode(db, episodeInput(source.id, 'https://example.test/e1', '1080', 'discovered'));
+    const failedFile = insertFile(db, {
+      url: 'https://example.test/e1',
+      title: 'Series Title',
+      filename: 'Series.Title.s01e02.svtplay.mkv',
+      service: 'svtplay',
+      quality: '1080',
+      season: 1,
+      episode: 2
+    });
+    db.prepare("UPDATE file SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(failedFile.id);
+    db.prepare(
+      `
+        UPDATE watchlist_episode
+        SET status = 'blocked', fileId = ?, downloadAttempts = 3, nzbAttempts = 1,
+            lastErrorCode = 'unknown', lastError = 'failed'
+        WHERE id = ?
+      `
+    ).run(failedFile.id, episode.id);
+    const app = createTestApp(db, config);
+
+    const response = await app.request(`/v1/watchlist/${source.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ sourceId: source.id, retried: 1 });
+    expect(listWatchlistEpisodesForSource(db, source.id)).toMatchObject([
+      {
+        status: 'download_failed',
+        fileId: null,
+        nzbId: null,
+        downloadAttempts: 0,
+        nzbAttempts: 0,
+        lastErrorCode: null,
+        lastError: null
+      }
+    ]);
+
+    await reconcile(workerWith(discovery()));
+
+    const [retried] = listWatchlistEpisodesForSource(db, source.id);
+    expect(retried).toMatchObject({
+      status: 'download_queued',
+      downloadAttempts: 1
+    });
+    expect(retried!.fileId).not.toBe(failedFile.id);
+  });
+
+  it('retries failed source episodes so NZBs can be queued again', async () => {
+    const source = insertSource(true);
+    const { row: episode } = upsertWatchlistEpisode(db, episodeInput(source.id, 'https://example.test/e1', '1080', 'discovered'));
+    const file = insertFile(db, {
+      url: 'https://example.test/e1',
+      title: 'Series Title',
+      filename: 'Series.Title.s01e02.svtplay.mkv',
+      service: 'svtplay',
+      quality: '1080',
+      season: 1,
+      episode: 2
+    });
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    await writeMediaFile(file);
+    const failedNzb = insertNzb(db, { releaseName: 'Series.Title.s01e02.svtplay', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(failedNzb.id);
+    db.prepare(
+      `
+        UPDATE watchlist_episode
+        SET status = 'blocked', fileId = ?, nzbId = ?, nzbAttempts = 3,
+            lastErrorCode = 'unknown', lastError = 'failed'
+        WHERE id = ?
+      `
+    ).run(file.id, failedNzb.id, episode.id);
+    const app = createTestApp(db, config);
+
+    const response = await app.request(`/v1/watchlist/${source.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ sourceId: source.id, retried: 1 });
+    expect(listWatchlistEpisodesForSource(db, source.id)).toMatchObject([
+      {
+        status: 'download_completed',
+        fileId: file.id,
+        nzbId: null,
+        nzbAttempts: 0,
+        lastErrorCode: null,
+        lastError: null
+      }
+    ]);
+
+    await reconcile(workerWith(discovery()));
+
+    const [retried] = listWatchlistEpisodesForSource(db, source.id);
+    expect(retried).toMatchObject({
+      status: 'nzb_queued',
+      fileId: file.id,
+      nzbAttempts: 1
+    });
+    expect(retried!.nzbId).not.toBe(failedNzb.id);
+  });
+
+  it('returns zero when a source has no retryable episodes', async () => {
+    const source = insertSource(true);
+    upsertWatchlistEpisode(db, episodeInput(source.id, 'https://example.test/e1', '1080', 'discovered'));
+    const app = createTestApp(db, config);
+
+    const response = await app.request(`/v1/watchlist/${source.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ sourceId: source.id, retried: 0 });
+  });
+
   it('rejects unsupported watch URLs and invalid backfill values', async () => {
     const app = createTestApp(db, config);
 

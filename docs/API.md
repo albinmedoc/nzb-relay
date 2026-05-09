@@ -222,6 +222,26 @@ Status codes:
 - `204` deleted
 - `404` source does not exist
 
+### `POST /v1/watchlist/:sourceId/retry`
+
+Retries failed watchlist work for a source.
+
+All episodes under the source with status `download_failed`, `nzb_failed`, or `blocked` are reset so the watchlist worker can queue them again on its next reconciliation pass.
+
+Response:
+
+```json
+{
+  "sourceId": "uuid",
+  "retried": 2
+}
+```
+
+Status codes:
+
+- `202` retry state updated
+- `404` source does not exist
+
 ## Downloads
 
 ### `POST /v1/downloads`
@@ -368,6 +388,29 @@ Status codes:
 - `404` row does not exist
 - `409 referenced_by_nzb` hard-delete is blocked
 
+### `POST /v1/files/:fileId/retry`
+
+Retries a failed download by resetting the same file row back to `pending`.
+
+Only failed, non-deleted file rows can be retried. Soft-deleted files are rejected.
+
+Response:
+
+```json
+{
+  "fileId": "uuid",
+  "status": "pending"
+}
+```
+
+Status codes:
+
+- `202` queued for retry
+- `404` row does not exist
+- `409 file_not_failed`
+- `409 file_deleted`
+- `409 duplicate_url`
+
 ## NZB Uploads
 
 ### `POST /v1/nzb`
@@ -501,6 +544,31 @@ Status codes:
 
 - `204` deleted
 - `404` row does not exist
+
+### `POST /v1/nzb/:nzbId/retry`
+
+Retries a failed NZB upload by resetting the same NZB row back to `pending`.
+
+Referenced files are revalidated before retry. They must still exist, be completed, and not be deleted.
+
+Response:
+
+```json
+{
+  "nzbId": "uuid",
+  "status": "pending"
+}
+```
+
+Status codes:
+
+- `202` queued for retry
+- `404` row does not exist
+- `409 nzb_not_failed`
+- `409 file_missing`
+- `409 file_pending`
+- `409 file_failed`
+- `409 file_deleted`
 
 ## Webhooks
 

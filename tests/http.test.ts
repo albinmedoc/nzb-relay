@@ -369,6 +369,56 @@ describe('http api', () => {
     expect(await metadata.json()).toMatchObject({ id: row.id, deleted: true });
   });
 
+  it('retries a failed file by resetting the same row to pending', async () => {
+    const row = createFile('https://example.test/retry-file');
+    db.prepare("UPDATE file SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(row.id);
+
+    const response = await app.request(`/v1/files/${row.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ fileId: row.id, status: 'pending' });
+    expect(getFile(db, row.id)).toMatchObject({
+      status: 'pending',
+      downloadedAt: null,
+      errorCode: null,
+      error: null
+    });
+  });
+
+  it('rejects file retry unless the file is failed, active, and URL-unique', async () => {
+    const pending = createFile('https://example.test/retry-pending');
+    const pendingResponse = await app.request(`/v1/files/${pending.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(pendingResponse.status).toBe(409);
+    expect(await pendingResponse.json()).toMatchObject({ code: 'file_not_failed' });
+
+    const deleted = createFile('https://example.test/retry-deleted');
+    db.prepare("UPDATE file SET status = 'failed', errorCode = 'unknown', error = 'failed', deleted = 1 WHERE id = ?").run(
+      deleted.id
+    );
+    const deletedResponse = await app.request(`/v1/files/${deleted.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(deletedResponse.status).toBe(409);
+    expect(await deletedResponse.json()).toMatchObject({ code: 'file_deleted' });
+
+    const failed = createFile('https://example.test/retry-duplicate');
+    db.prepare("UPDATE file SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(failed.id);
+    createFile('https://example.test/retry-duplicate');
+    const duplicateResponse = await app.request(`/v1/files/${failed.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(duplicateResponse.status).toBe(409);
+    expect(await duplicateResponse.json()).toMatchObject({ code: 'duplicate_url' });
+  });
+
   it('kills a running download before marking the file deleted', async () => {
     const row = insertFile(db, {
       url: 'https://example.test/running-delete',
@@ -398,6 +448,61 @@ describe('http api', () => {
     expect(response.status).toBe(204);
     expect(deletedValueWhenCancelled).toBe(0);
     expect(getFile(db, row.id)?.deleted).toBe(1);
+  });
+
+  it('retries a failed NZB by resetting the same row to pending', async () => {
+    const file = createFile('https://example.test/retry-nzb-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Retry.Nzb', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(nzb.id);
+
+    const response = await app.request(`/v1/nzb/${nzb.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ nzbId: nzb.id, status: 'pending' });
+    expect(getNzb(db, nzb.id)).toMatchObject({
+      status: 'pending',
+      postedAt: null,
+      errorCode: null,
+      error: null
+    });
+  });
+
+  it('rejects NZB retry unless the NZB is failed and files are postable', async () => {
+    const file = createFile('https://example.test/retry-nzb-invalid-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const pendingNzb = insertNzb(db, { releaseName: 'Pending.Nzb', fileIds: [file.id] });
+    const pendingResponse = await app.request(`/v1/nzb/${pendingNzb.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(pendingResponse.status).toBe(409);
+    expect(await pendingResponse.json()).toMatchObject({ code: 'nzb_not_failed' });
+
+    const deletedFile = createFile('https://example.test/retry-nzb-deleted-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      deletedFile.id
+    );
+    const failedNzb = insertNzb(db, { releaseName: 'Deleted.File.Nzb', fileIds: [deletedFile.id] });
+    db.prepare('UPDATE file SET deleted = 1 WHERE id = ?').run(deletedFile.id);
+    db.prepare("UPDATE nzb SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(failedNzb.id);
+
+    const deletedFileResponse = await app.request(`/v1/nzb/${failedNzb.id}/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(deletedFileResponse.status).toBe(409);
+    expect(await deletedFileResponse.json()).toMatchObject({ code: 'file_deleted' });
   });
 });
 

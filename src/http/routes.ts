@@ -19,7 +19,9 @@ import {
   isFileReferencedByNzb,
   listFiles,
   listNzbs,
-  markFileDeleted
+  markFileDeleted,
+  retryFailedFile,
+  retryFailedNzb
 } from '../db/repository.js';
 import type { JobListFilters } from '../db/repository.js';
 import {
@@ -27,11 +29,12 @@ import {
   getWatchlistSource,
   insertWatchlistSource,
   listWatchlistEpisodesForSource,
-  listWatchlistSources
+  listWatchlistSources,
+  retryFailedWatchlistEpisodesForSource
 } from '../db/watchlist-repository.js';
 import type { FileRow, JobStatus, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
 import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
-import { removeDownloadDirectory, removeNzbArtifacts } from '../utils/cleanup.js';
+import { removeDownloadDirectory, removeDownloadPartialsKeepLog, removeNzbArtifacts, removeNzbWorkDir } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
 import {
   renderDownloadFilename,
@@ -194,6 +197,16 @@ export function createApp({
     return c.body(null, 204);
   });
 
+  v1.post('/watchlist/:sourceId/retry', (c) => {
+    const source = getWatchlistSource(db, c.req.param('sourceId'));
+    if (!source) {
+      return errorResponse(c, 404, 'not_found', 'watchlist source not found');
+    }
+
+    const retried = retryFailedWatchlistEpisodesForSource(db, source.id);
+    return c.json({ sourceId: source.id, retried }, 202);
+  });
+
   v1.get('/files', (c) => {
     const params = parseListParams(c);
     if (!params.ok) {
@@ -226,6 +239,28 @@ export function createApp({
       return errorResponse(c, 404, 'not_found', 'file not found');
     }
     return readTextLog(c, fileLogPath(config, row));
+  });
+
+  v1.post('/files/:fileId/retry', async (c) => {
+    const row = getFile(db, c.req.param('fileId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'file not found');
+    }
+    if (row.deleted) {
+      return errorResponse(c, 409, 'file_deleted', 'file is deleted');
+    }
+    if (row.status !== 'failed') {
+      return errorResponse(c, 409, 'file_not_failed', 'file is not failed');
+    }
+    if (hasActiveUrl(db, row.url)) {
+      return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+    }
+
+    await removeDownloadPartialsKeepLog(config, row);
+    if (!retryFailedFile(db, row.id)) {
+      return errorResponse(c, 409, 'file_not_failed', 'file is not failed');
+    }
+    return c.json({ fileId: row.id, status: 'pending' }, 202);
   });
 
   v1.get('/files/:fileId', (c) => {
@@ -324,6 +359,28 @@ export function createApp({
       return errorResponse(c, 404, 'not_found', 'nzb not found');
     }
     return readTextLog(c, nzbLogPath(config, row));
+  });
+
+  v1.post('/nzb/:nzbId/retry', async (c) => {
+    const row = getNzb(db, c.req.param('nzbId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'nzb not found');
+    }
+    if (row.status !== 'failed') {
+      return errorResponse(c, 409, 'nzb_not_failed', 'NZB is not failed');
+    }
+
+    const files = canonicalFilesForNzb(db, row.id);
+    const fileStateValidation = validateNzbFileStates(db, files.map((file) => file.id));
+    if (!fileStateValidation.ok) {
+      return errorResponse(c, fileStateValidation.status, fileStateValidation.code, fileStateValidation.error);
+    }
+
+    await removeNzbWorkDir(config, row);
+    if (!retryFailedNzb(db, row.id)) {
+      return errorResponse(c, 409, 'nzb_not_failed', 'NZB is not failed');
+    }
+    return c.json({ nzbId: row.id, status: 'pending' }, 202);
   });
 
   v1.get('/nzb/:nzbId', (c) => {

@@ -423,6 +423,85 @@ export function markWatchlistEpisodeNeedsRedownload(
   ).run(input.blocked ? 'blocked' : 'download_failed', input.errorCode, input.error, timestamp, episodeId);
 }
 
+export function retryFailedWatchlistEpisodesForSource(
+  db: AppDatabase,
+  sourceId: string,
+  timestamp = nowIso()
+): number {
+  return db.transaction(() => {
+    const retryable = db
+      .prepare(
+        `
+          SELECT
+            we.id,
+            we.status,
+            f.id AS fileId,
+            f.status AS fileStatus,
+            f.deleted AS fileDeleted
+          FROM watchlist_episode we
+          LEFT JOIN file f ON f.id = we.fileId
+          WHERE we.sourceId = ?
+            AND we.status IN ('download_failed', 'nzb_failed', 'blocked')
+        `
+      )
+      .all(sourceId) as Array<{
+        id: string;
+        status: WatchlistEpisodeStatus;
+        fileId: string | null;
+        fileStatus: string | null;
+        fileDeleted: number | null;
+      }>;
+
+    const resetDownload = db.prepare(
+      `
+        UPDATE watchlist_episode
+        SET status = 'download_failed',
+            fileId = NULL,
+            nzbId = NULL,
+            downloadAttempts = 0,
+            nzbAttempts = 0,
+            downloadQueuedAt = NULL,
+            downloadedAt = NULL,
+            nzbQueuedAt = NULL,
+            postedAt = NULL,
+            lastErrorCode = NULL,
+            lastError = NULL,
+            updatedAt = ?
+        WHERE id = ?
+      `
+    );
+    const resetNzb = db.prepare(
+      `
+        UPDATE watchlist_episode
+        SET status = 'download_completed',
+            nzbId = NULL,
+            nzbAttempts = 0,
+            nzbQueuedAt = NULL,
+            postedAt = NULL,
+            lastErrorCode = NULL,
+            lastError = NULL,
+            updatedAt = ?
+        WHERE id = ?
+      `
+    );
+
+    for (const episode of retryable) {
+      if (
+        (episode.status === 'nzb_failed' || episode.status === 'blocked') &&
+        episode.fileId &&
+        episode.fileStatus === 'completed' &&
+        !episode.fileDeleted
+      ) {
+        resetNzb.run(timestamp, episode.id);
+        continue;
+      }
+      resetDownload.run(timestamp, episode.id);
+    }
+
+    return retryable.length;
+  })();
+}
+
 export function failedFilesByUrl(db: AppDatabase, url: string, excludeFileId: string): FileRow[] {
   return db
     .prepare(

@@ -97,6 +97,19 @@ export function markFileDeleted(db: AppDatabase, id: string): void {
   db.prepare('UPDATE file SET deleted = 1 WHERE id = ?').run(id);
 }
 
+export function retryFailedFile(db: AppDatabase, id: string): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE file
+        SET status = 'pending', downloadedAt = NULL, errorCode = NULL, error = NULL
+        WHERE id = ? AND status = 'failed' AND deleted = 0
+      `
+    )
+    .run(id);
+  return result.changes === 1;
+}
+
 export function hardDeleteFile(db: AppDatabase, id: string): void {
   db.prepare('DELETE FROM file WHERE id = ?').run(id);
 }
@@ -254,6 +267,19 @@ export function getNzbOrThrow(db: AppDatabase, id: string): NzbRow {
 
 export function deleteNzb(db: AppDatabase, id: string): void {
   db.prepare('DELETE FROM nzb WHERE id = ?').run(id);
+}
+
+export function retryFailedNzb(db: AppDatabase, id: string): boolean {
+  const result = db
+    .prepare(
+      `
+        UPDATE nzb
+        SET status = 'pending', postedAt = NULL, errorCode = NULL, error = NULL
+        WHERE id = ? AND status = 'failed'
+      `
+    )
+    .run(id);
+  return result.changes === 1;
 }
 
 export function listNzbs(
