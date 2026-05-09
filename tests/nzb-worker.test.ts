@@ -54,5 +54,27 @@ describe('nzb worker', () => {
       '--out',
       path.join('/data', 'nzb', 'nzb-1', 'Release.nzb')
     ]);
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--from',
+        '${rand(12)} <${rand(16)}@${rand(12)}.invalid>',
+        '--date',
+        'now',
+        '--message-id',
+        '${rand(24)}@${rand(12)}.invalid',
+        '--nzb-file-mode',
+        'temp',
+        '--nzb-del-incomplete',
+        '--overwrite',
+        '--retry-on-bad-resp',
+        '--connect-retries',
+        '3',
+        '--post-retries',
+        '2',
+        '--progress',
+        'log:60s',
+        '--log-time'
+      ])
+    );
   });
 });

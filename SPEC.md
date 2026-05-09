@@ -735,6 +735,17 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      --user <USENET_USER> --password <USENET_PASS> \
      --groups <random USENET_NEWSGROUPS_PER_UPLOAD entries from USENET_NEWSGROUPS> \
      --article-size 750000 \
+     --from '${rand(12)} <${rand(16)}@${rand(12)}.invalid>' \
+     --date now \
+     --message-id '${rand(24)}@${rand(12)}.invalid' \
+     --nzb-file-mode temp \
+     --nzb-del-incomplete \
+     --overwrite \
+     --retry-on-bad-resp \
+     --connect-retries 3 \
+     --post-retries 2 \
+     --progress log:60s \
+     --log-time \
      --meta name=<release-name> \
      --meta password=<password> \
      --out <DATA_DIR>/nzb/<nzbId>/<release-name>.nzb \
