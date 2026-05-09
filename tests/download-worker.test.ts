@@ -3,7 +3,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { FileRow } from '../src/types.js';
-import { buildSvtplayDownloadArgs, removeDownloadSidecars } from '../src/workers/download-worker.js';
+import {
+  buildFfmpegSubtitleMuxArgs,
+  buildSvtplayDownloadArgs,
+  removeDownloadSidecars,
+  subtitleLanguageFromPath,
+  subtitleTextForLanguageDetection
+} from '../src/workers/download-worker.js';
 import { downloadDir } from '../src/utils/paths.js';
 import { cleanup, createTempDataDir, testConfig } from './helpers.js';
 
@@ -43,12 +49,82 @@ describe('download worker', () => {
       '--force',
       '--output-format=mkv',
       '--subtitle',
-      '-M',
       '--all-subtitles',
       `--output=${path.join(dataDir, 'downloads', 'file-1')}`,
       '--filename=Title.svtplay.{ext}',
       'https://www.svtplay.se/video/1'
     ]);
+  });
+
+  it('builds ffmpeg args to mux subtitle sidecars into the mkv', () => {
+    expect(buildFfmpegSubtitleMuxArgs(
+      '/data/downloads/file-1/Title.svtplay.mkv',
+      [
+        '/data/downloads/file-1/Title.svtplay.en.srt',
+        '/data/downloads/file-1/Title.svtplay.sv.srt'
+      ],
+      '/data/downloads/file-1/Title.svtplay.muxing.mkv',
+      ['eng', 'swe']
+    )).toEqual([
+      '-y',
+      '-i',
+      '/data/downloads/file-1/Title.svtplay.mkv',
+      '-i',
+      '/data/downloads/file-1/Title.svtplay.en.srt',
+      '-i',
+      '/data/downloads/file-1/Title.svtplay.sv.srt',
+      '-map',
+      '0:v?',
+      '-map',
+      '0:a?',
+      '-map',
+      '1:0',
+      '-metadata:s:s:0',
+      'language=eng',
+      '-map',
+      '2:0',
+      '-metadata:s:s:1',
+      'language=swe',
+      '-map_metadata',
+      '0',
+      '-map_chapters',
+      '0',
+      '-c',
+      'copy',
+      '-c:s',
+      'srt',
+      '/data/downloads/file-1/Title.svtplay.muxing.mkv'
+    ]);
+  });
+
+  it('uses explicit SVT subtitle filename languages and otherwise falls back to undetermined', () => {
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.lulesamiska.srt')).toBe('smj');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.meankieli.srt')).toBe('fit');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.jiddisch.srt')).toBe('yid');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.sv.srt')).toBe('und');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.sv-SE.srt')).toBe('und');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.en.vtt')).toBe('und');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.se.srt')).toBe('und');
+    expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.unknown.srt')).toBe('und');
+  });
+
+  it('extracts subtitle text for language detection', async () => {
+    const subtitlePath = path.join(dataDir, 'Title.svtplay.sv.srt');
+    await fs.writeFile(subtitlePath, [
+      'WEBVTT',
+      '',
+      '1',
+      '00:00:01.000 --> 00:00:03.000',
+      '<i>Hej och välkommen.</i>',
+      '',
+      '2',
+      '00:00:04.000 --> 00:00:05.000',
+      'Det här är en testtext.'
+    ].join('\n'));
+
+    await expect(subtitleTextForLanguageDetection(subtitlePath)).resolves.toBe(
+      'Hej och välkommen. Det här är en testtext.'
+    );
   });
 
   it('removes all non-media sidecars after a successful download', async () => {
