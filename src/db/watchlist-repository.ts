@@ -20,6 +20,12 @@ export interface CreateWatchlistSourceInput {
   deleteFileAfterNzb?: boolean;
 }
 
+export interface UpdateWatchlistSourceInput {
+  enabled?: boolean;
+  deleteFileAfterNzb?: boolean;
+  title?: string;
+}
+
 export interface DiscoveredWatchlistEpisodeInput {
   sourceId: string;
   url: string;
@@ -71,6 +77,38 @@ export function getWatchlistSourceOrThrow(db: AppDatabase, id: string): Watchlis
 export function deleteWatchlistSource(db: AppDatabase, id: string): boolean {
   const result = db.prepare('DELETE FROM watchlist_source WHERE id = ?').run(id);
   return result.changes === 1;
+}
+
+export function updateWatchlistSource(
+  db: AppDatabase,
+  id: string,
+  input: UpdateWatchlistSourceInput,
+  timestamp = nowIso()
+): WatchlistSourceRow | null {
+  const updates: string[] = [];
+  const params: unknown[] = [];
+
+  if (input.enabled !== undefined) {
+    updates.push('enabled = ?');
+    params.push(input.enabled ? 1 : 0);
+  }
+  if (input.deleteFileAfterNzb !== undefined) {
+    updates.push('deleteFileAfterNzb = ?');
+    params.push(input.deleteFileAfterNzb ? 1 : 0);
+  }
+  if (input.title !== undefined) {
+    updates.push('title = ?');
+    params.push(input.title);
+  }
+
+  updates.push('updatedAt = ?');
+  params.push(timestamp, id);
+
+  const result = db.prepare(`UPDATE watchlist_source SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  if (result.changes !== 1) {
+    return null;
+  }
+  return getWatchlistSourceOrThrow(db, id);
 }
 
 export function listWatchlistSources(
@@ -145,7 +183,7 @@ export function markWatchlistSourceScanCompleted(
   db.prepare(
     `
       UPDATE watchlist_source
-      SET title = ?, url = ?, firstScanCompleted = 1, lastScannedAt = ?, nextScanAt = ?,
+      SET title = COALESCE(title, ?), url = ?, firstScanCompleted = 1, lastScannedAt = ?, nextScanAt = ?,
           lastErrorCode = NULL, lastError = NULL, updatedAt = ?
       WHERE id = ?
     `

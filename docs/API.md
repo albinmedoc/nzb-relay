@@ -218,6 +218,40 @@ Status codes:
 - `200` found
 - `404` source does not exist
 
+### `PATCH /v1/watchlist/:sourceId`
+
+Updates editable fields on a watchlist source.
+
+Request:
+
+```json
+{
+  "enabled": false,
+  "deleteFileAfterNzb": false,
+  "title": "Custom Series Title"
+}
+```
+
+All fields are optional, but at least one editable field must be present.
+
+Editable fields:
+
+- `enabled`
+- `deleteFileAfterNzb`
+- `title`
+
+Manual titles are preserved during future scans; provider-discovered titles only fill sources that do not already have a title.
+
+Status codes:
+
+- `200` updated
+- `400 invalid_json`
+- `400 empty_update`
+- `400 invalid_enabled`
+- `400 invalid_delete_file_after_nzb`
+- `400 invalid_title`
+- `404` source does not exist
+
 ### `DELETE /v1/watchlist/:sourceId`
 
 Stops monitoring a source and deletes its watchlist metadata.

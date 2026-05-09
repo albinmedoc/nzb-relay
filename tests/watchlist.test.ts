@@ -185,6 +185,115 @@ describe('watchlist API', () => {
     });
   });
 
+  it('updates editable watchlist source fields', async () => {
+    const source = insertSource(true);
+    const app = createTestApp(db, config);
+
+    const updated = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: false, deleteFileAfterNzb: false, title: ' Custom Title ' })
+    });
+
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      id: source.id,
+      enabled: false,
+      deleteFileAfterNzb: false,
+      title: 'Custom Title',
+      backfill: true
+    });
+    expect(getWatchlistSource(db, source.id)).toMatchObject({
+      enabled: 0,
+      deleteFileAfterNzb: 0,
+      title: 'Custom Title'
+    });
+  });
+
+  it('updates one editable watchlist source field without changing the others', async () => {
+    const source = insertSource(false, false);
+    db.prepare('UPDATE watchlist_source SET title = ? WHERE id = ?').run('Existing Title', source.id);
+    const app = createTestApp(db, config);
+
+    const updated = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: false })
+    });
+
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      id: source.id,
+      enabled: false,
+      deleteFileAfterNzb: false,
+      title: 'Existing Title',
+      backfill: false
+    });
+  });
+
+  it('rejects invalid and empty watchlist source updates', async () => {
+    const source = insertSource(true);
+    const app = createTestApp(db, config);
+    const headers = {
+      authorization: 'Bearer secret',
+      'content-type': 'application/json'
+    };
+
+    const invalidEnabled = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ enabled: 'no' })
+    });
+    expect(invalidEnabled.status).toBe(400);
+    expect(await invalidEnabled.json()).toMatchObject({ code: 'invalid_enabled' });
+
+    const invalidDelete = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ deleteFileAfterNzb: 'no' })
+    });
+    expect(invalidDelete.status).toBe(400);
+    expect(await invalidDelete.json()).toMatchObject({ code: 'invalid_delete_file_after_nzb' });
+
+    const invalidTitle = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ title: '' })
+    });
+    expect(invalidTitle.status).toBe(400);
+    expect(await invalidTitle.json()).toMatchObject({ code: 'invalid_title' });
+
+    const empty = await app.request(`/v1/watchlist/${source.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({})
+    });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({ code: 'empty_update' });
+  });
+
+  it('returns 404 when updating a missing watchlist source', async () => {
+    const app = createTestApp(db, config);
+
+    const updated = await app.request('/v1/watchlist/missing-source', {
+      method: 'PATCH',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ enabled: false })
+    });
+
+    expect(updated.status).toBe(404);
+    expect(await updated.json()).toMatchObject({ code: 'not_found' });
+  });
+
   it('retries failed source episodes so NZBs can be queued again', async () => {
     const source = insertSource(true);
     const { row: episode } = upsertWatchlistEpisode(db, episodeInput(source.id, 'https://example.test/e1', '1080', 'discovered'));
@@ -315,6 +424,20 @@ describe('watchlist database', () => {
 });
 
 describe('watchlist worker', () => {
+  it('keeps a manually edited source title after scanning', async () => {
+    const source = insertSource(true);
+    db.prepare('UPDATE watchlist_source SET title = ? WHERE id = ?').run('Manual Title', source.id);
+    const worker = workerWith(discovery());
+
+    await scan(worker, getWatchlistSource(db, source.id)!);
+
+    expect(getWatchlistSource(db, source.id)).toMatchObject({
+      title: 'Manual Title',
+      url: 'https://example.test/source',
+      firstScanCompleted: 1
+    });
+  });
+
   it('queues discovered backfill downloads using source and episode metadata', async () => {
     const source = insertSource(true);
     const worker = workerWith(discovery());

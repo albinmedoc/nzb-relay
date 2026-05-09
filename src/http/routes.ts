@@ -30,7 +30,8 @@ import {
   insertWatchlistSource,
   listWatchlistEpisodesForSource,
   listWatchlistSources,
-  retryFailedWatchlistEpisodesForSource
+  retryFailedWatchlistEpisodesForSource,
+  updateWatchlistSource
 } from '../db/watchlist-repository.js';
 import type { FileRow, JobStatus, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
 import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
@@ -188,6 +189,25 @@ export function createApp({
       ...serializeWatchlistSource(source),
       episodes: listWatchlistEpisodesForSource(db, source.id).map(serializeWatchlistEpisode)
     });
+  });
+
+  v1.patch('/watchlist/:sourceId', async (c) => {
+    const body = await readJsonObject(c);
+    if (!body.ok) {
+      return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
+    }
+
+    const validation = validateWatchlistPatchBody(body.value);
+    if (!validation.ok) {
+      return errorResponse(c, 400, validation.code, validation.error);
+    }
+
+    const source = updateWatchlistSource(db, c.req.param('sourceId'), validation.value);
+    if (!source) {
+      return errorResponse(c, 404, 'not_found', 'watchlist source not found');
+    }
+
+    return c.json(serializeWatchlistSource(source));
   });
 
   v1.delete('/watchlist/:sourceId', (c) => {
@@ -621,6 +641,46 @@ function validateWatchlistBody(body: Record<string, unknown>):
       deleteFileAfterNzb: deleteFileAfterNzb.data ?? true
     }
   };
+}
+
+function validateWatchlistPatchBody(body: Record<string, unknown>):
+  | { ok: true; value: { enabled?: boolean; deleteFileAfterNzb?: boolean; title?: string } }
+  | { ok: false; code: string; error: string } {
+  const value: { enabled?: boolean; deleteFileAfterNzb?: boolean; title?: string } = {};
+  let fields = 0;
+
+  if ('enabled' in body) {
+    const enabled = z.boolean().safeParse(body.enabled);
+    if (!enabled.success) {
+      return { ok: false, code: 'invalid_enabled', error: 'enabled must be a boolean' };
+    }
+    value.enabled = enabled.data;
+    fields += 1;
+  }
+
+  if ('deleteFileAfterNzb' in body) {
+    const deleteFileAfterNzb = z.boolean().safeParse(body.deleteFileAfterNzb);
+    if (!deleteFileAfterNzb.success) {
+      return { ok: false, code: 'invalid_delete_file_after_nzb', error: 'deleteFileAfterNzb must be a boolean' };
+    }
+    value.deleteFileAfterNzb = deleteFileAfterNzb.data;
+    fields += 1;
+  }
+
+  if ('title' in body) {
+    const title = nonEmptyStringSchema.safeParse(body.title);
+    if (!title.success) {
+      return { ok: false, code: 'invalid_title', error: 'title must be a non-empty string' };
+    }
+    value.title = title.data;
+    fields += 1;
+  }
+
+  if (fields === 0) {
+    return { ok: false, code: 'empty_update', error: 'at least one editable field is required' };
+  }
+
+  return { ok: true, value };
 }
 
 function validateNzbBody(body: Record<string, unknown>):
