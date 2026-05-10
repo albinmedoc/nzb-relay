@@ -445,6 +445,7 @@ function serializeFile(row: FileRow) {
     url: row.url,
     status: row.status,
     filename: row.filename,
+    createdAt: row.createdAt,
     downloadedAt: row.downloadedAt,
     deleted: Boolean(row.deleted),
     errorCode: row.status === 'failed' ? row.errorCode : null,
@@ -465,6 +466,7 @@ function serializeNzb(db: AppDatabase, row: NzbRow) {
       id: file.id,
       url: file.url,
       status: file.status,
+      createdAt: file.createdAt,
       downloadedAt: file.downloadedAt
     }))
   };

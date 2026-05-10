@@ -88,7 +88,7 @@ describe('http api', () => {
     expect(byStatus.status).toBe(200);
     expect(await byStatus.json()).toMatchObject({
       total: 1,
-      items: [{ id: completed.id, status: 'completed' }]
+      items: [{ id: completed.id, status: 'completed', createdAt: '2026-05-02T00:00:00.000Z' }]
     });
 
     const byDate = await app.request(
@@ -366,7 +366,7 @@ describe('http api', () => {
     const metadata = await app.request(`/v1/files/${row.id}`, {
       headers: { authorization: 'Bearer secret' }
     });
-    expect(await metadata.json()).toMatchObject({ id: row.id, deleted: true });
+    expect(await metadata.json()).toMatchObject({ id: row.id, createdAt: row.createdAt, deleted: true });
   });
 
   it('retries a failed file by resetting the same row to pending', async () => {

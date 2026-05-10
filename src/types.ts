@@ -128,6 +128,7 @@ export interface NzbFileSummary {
   season: number | null;
   episode: number | null;
   filename: string;
+  createdAt: string;
   downloadedAt: string | null;
   deleted: number;
 }

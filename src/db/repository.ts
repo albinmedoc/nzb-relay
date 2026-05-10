@@ -363,7 +363,7 @@ export function canonicalFilesForNzb(db: AppDatabase, nzbId: string): NzbFileSum
   return db
     .prepare(
       `
-        SELECT f.id, f.url, f.status, f.title, f.service, f.season, f.episode, f.filename, f.downloadedAt, f.deleted
+        SELECT f.id, f.url, f.status, f.title, f.service, f.season, f.episode, f.filename, f.createdAt, f.downloadedAt, f.deleted
         FROM nzb_files nf
         JOIN file f ON f.id = nf.fileId
         WHERE nf.nzbId = ?
