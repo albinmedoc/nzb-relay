@@ -673,20 +673,23 @@ Per `pending` `file` row (after the worker has atomically transitioned it to `ru
      --output-format=mkv \
      --subtitle \
      --all-subtitles \
+     --no-merge \
      --output=<DATA_DIR>/downloads/<fileId> \
      --filename=<filename-without-extension>.{ext} \
      <url>
    ```
    - `--output-format=mkv` forces an mkv container regardless of the source format. Requires `ffmpeg` on `PATH` (already present in the `node:20-slim` reference image after `apt install ffmpeg`).
    - `--force` lets svtplay-dl overwrite stale intermediate files left by interrupted downloads.
-   - `--subtitle --all-subtitles` downloads every available subtitle track as sidecars. The worker intentionally avoids `svtplay-dl -M` and does the subtitle mux itself with `ffmpeg`, because `svtplay-dl` can crash while trying to inspect a missing converted `.srt` sidecar.
+   - `--subtitle --all-subtitles` downloads every available subtitle track as sidecars.
+   - `--no-merge` leaves audio/video/subtitle artifacts untouched. The worker intentionally avoids `svtplay-dl` post-processing and does the final mux itself with `ffmpeg`, because `svtplay-dl` can crash while merging a missing converted `.srt` sidecar or an HLS `.audio.ts` sidecar that ffmpeg needs to treat explicitly as MPEG-TS.
    - `--output` is the per-file download directory; `--filename` controls the final media basename.
-4. On exit code 0: verify `<DATA_DIR>/downloads/<fileId>/<filename>.mkv` exists. If subtitle sidecars are present, strip cue numbers/timestamps/tags from the subtitle text and POST `{ "query": "<sampled subtitle text>" }` to `https://svtplay-dl.se/langdetect/`. Use the returned ISO 639-3 language code, falling back to SVT's explicit subtitle-name exceptions or `und` if detection fails. Then run:
+4. On exit code 0: collect downloaded media artifacts such as `<filename>.ts` and `<filename>.audio.ts`. If subtitle sidecars are present, strip cue numbers/timestamps/tags from the subtitle text and POST `{ "query": "<sampled subtitle text>" }` to `https://svtplay-dl.se/langdetect/`. Use the returned ISO 639-3 language code, falling back to SVT's explicit subtitle-name exceptions or `und` if detection fails. Then run:
    ```
    ffmpeg -y \
-     -i <DATA_DIR>/downloads/<fileId>/<filename>.mkv \
+     -f mpegts -i <DATA_DIR>/downloads/<fileId>/<filename>.ts \
+     -f mpegts -i <DATA_DIR>/downloads/<fileId>/<filename>.audio.ts \
      -i <subtitle-sidecar> ... \
-     -map 0:v? -map 0:a? -map 1:0 ... \
+     -map 0:v? -map 0:a? -map 1:a? -map 2:0 ... \
      -map_metadata 0 -map_chapters 0 \
      -c copy -c:s srt \
      <DATA_DIR>/downloads/<fileId>/<filename-without-extension>.muxing.mkv

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { FileRow } from '../src/types.js';
 import {
+  buildFfmpegDownloadMuxArgs,
   buildFfmpegSubtitleMuxArgs,
   buildSvtplayDownloadArgs,
   removeDownloadSidecars,
@@ -50,6 +51,7 @@ describe('download worker', () => {
       '--output-format=mkv',
       '--subtitle',
       '--all-subtitles',
+      '--no-merge',
       `--output=${path.join(dataDir, 'downloads', 'file-1')}`,
       '--filename=Title.svtplay.{ext}',
       'https://www.svtplay.se/video/1'
@@ -85,6 +87,43 @@ describe('download worker', () => {
       '2:0',
       '-metadata:s:s:1',
       'language=swe',
+      '-map_metadata',
+      '0',
+      '-map_chapters',
+      '0',
+      '-c',
+      'copy',
+      '-c:s',
+      'srt',
+      '/data/downloads/file-1/Title.svtplay.muxing.mkv'
+    ]);
+  });
+
+  it('builds ffmpeg args to mux separate MPEG-TS video and audio artifacts', () => {
+    expect(buildFfmpegDownloadMuxArgs(
+      [
+        '/data/downloads/file-1/Title.svtplay.ts',
+        '/data/downloads/file-1/Title.svtplay.audio.ts'
+      ],
+      [],
+      '/data/downloads/file-1/Title.svtplay.muxing.mkv',
+      []
+    )).toEqual([
+      '-y',
+      '-f',
+      'mpegts',
+      '-i',
+      '/data/downloads/file-1/Title.svtplay.ts',
+      '-f',
+      'mpegts',
+      '-i',
+      '/data/downloads/file-1/Title.svtplay.audio.ts',
+      '-map',
+      '0:v?',
+      '-map',
+      '0:a?',
+      '-map',
+      '1:a?',
       '-map_metadata',
       '0',
       '-map_chapters',

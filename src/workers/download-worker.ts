@@ -114,8 +114,7 @@ export class DownloadWorker {
       const result = await this.runSvtplayDl(row, logStream, controller);
 
       if (result.code === 0) {
-        await ensureDownloadedMediaAtExpectedPath(this.config, row, logStream);
-        await this.muxSubtitles(row, logStream, controller);
+        await this.muxDownloadArtifacts(row, logStream, controller);
         await removeDownloadSidecars(this.config, row, logStream).catch((error) => {
           logStream.write(`download sidecar cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`);
           this.logger.warn({ event: 'download.sidecar_cleanup_failed', fileId: row.id, error }, 'download sidecar cleanup failed');
@@ -175,20 +174,19 @@ export class DownloadWorker {
     });
   }
 
-  private async muxSubtitles(row: FileRow, logStream: fs.WriteStream, controller: AbortController): Promise<void> {
-    const sidecars = await subtitleSidecars(this.config, row);
-    if (sidecars.length === 0) {
-      logStream.write('no subtitle sidecars found to mux\n');
-      return;
+  private async muxDownloadArtifacts(row: FileRow, logStream: fs.WriteStream, controller: AbortController): Promise<void> {
+    const mediaInputs = await downloadedMediaCandidates(this.config, row);
+    if (mediaInputs.length === 0) {
+      throw new Error(`download completed but no media artifacts were found for ${row.filename}`);
     }
 
-    const mediaPath = fileMediaPath(this.config, row);
+    const sidecars = await subtitleSidecars(this.config, row);
     const tempPath = path.join(downloadDir(this.config, row.id), `${stripMkv(row.filename)}.muxing.mkv`);
     const languages = await detectSubtitleLanguages(sidecars, logStream);
-    logStream.write(`muxing ${sidecars.length} subtitle sidecar(s) into ${row.filename}\n`);
+    logStream.write(`muxing ${mediaInputs.length} media artifact(s) and ${sidecars.length} subtitle sidecar(s) into ${row.filename}\n`);
     const result = await runLoggedProcess({
       command: 'ffmpeg',
-      args: buildFfmpegSubtitleMuxArgs(mediaPath, sidecars, tempPath, languages),
+      args: buildFfmpegDownloadMuxArgs(mediaInputs, sidecars, tempPath, languages),
       logStream,
       signal: controller.signal,
       logger: this.logger,
@@ -204,8 +202,8 @@ export class DownloadWorker {
       throw new DownloadPipelineError('child_exit_nonzero', childFailureSummary('ffmpeg', result));
     }
 
-    await fsp.rename(tempPath, mediaPath);
-    logStream.write(`muxed subtitles into ${row.filename}\n`);
+    await fsp.rename(tempPath, fileMediaPath(this.config, row));
+    logStream.write(`muxed download artifacts into ${row.filename}\n`);
   }
 }
 
@@ -225,37 +223,41 @@ export function buildSvtplayDownloadArgs(
     '--output-format=mkv',
     '--subtitle',
     '--all-subtitles',
+    '--no-merge',
     `--output=${downloadDir(config, row.id)}`,
     `--filename=${stripMkv(row.filename)}.{ext}`,
     row.url
   ];
 }
 
-export function buildFfmpegSubtitleMuxArgs(
-  mediaPath: string,
+export function buildFfmpegDownloadMuxArgs(
+  mediaPaths: string[],
   subtitlePaths: string[],
   outputPath: string,
   languages = subtitlePaths.map((subtitlePath) => subtitleLanguageFromPath(subtitlePath))
 ): string[] {
-  const args = [
-    '-y',
-    '-i',
-    mediaPath
-  ];
+  const args = ['-y'];
 
+  for (const mediaPath of mediaPaths) {
+    if (/\.ts$/i.test(mediaPath)) {
+      args.push('-f', 'mpegts');
+    }
+    args.push('-i', mediaPath);
+  }
   for (const subtitlePath of subtitlePaths) {
     args.push('-i', subtitlePath);
   }
 
-  args.push(
-    '-map',
-    '0:v?',
-    '-map',
-    '0:a?'
-  );
+  mediaPaths.forEach((mediaPath, index) => {
+    if (isLikelyAudioOnlyArtifact(mediaPath)) {
+      args.push('-map', `${index}:a?`);
+    } else {
+      args.push('-map', `${index}:v?`, '-map', `${index}:a?`);
+    }
+  });
 
   subtitlePaths.forEach((subtitlePath, index) => {
-    args.push('-map', `${index + 1}:0`);
+    args.push('-map', `${mediaPaths.length + index}:0`);
     const language = languages[index];
     if (language) {
       args.push(`-metadata:s:s:${index}`, `language=${language}`);
@@ -275,6 +277,17 @@ export function buildFfmpegSubtitleMuxArgs(
   );
 
   return args;
+}
+
+export const buildFfmpegSubtitleMuxArgs = (
+  mediaPath: string,
+  subtitlePaths: string[],
+  outputPath: string,
+  languages = subtitlePaths.map((subtitlePath) => subtitleLanguageFromPath(subtitlePath))
+): string[] => buildFfmpegDownloadMuxArgs([mediaPath], subtitlePaths, outputPath, languages);
+
+function isLikelyAudioOnlyArtifact(filePath: string): boolean {
+  return /\.audio\.[^.]+$/i.test(path.basename(filePath));
 }
 
 async function detectSubtitleLanguages(
@@ -322,35 +335,9 @@ export async function detectLanguage(query: string): Promise<string> {
   return typeof body.language === 'string' && body.language ? body.language : 'und';
 }
 
-async function ensureDownloadedMediaAtExpectedPath(
-  config: Config,
-  row: FileRow,
-  logStream: fs.WriteStream
-): Promise<void> {
-  const expectedPath = fileMediaPath(config, row);
-  try {
-    await fsp.stat(expectedPath);
-    return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error;
-    }
-  }
-
-  const candidates = await downloadedMediaCandidates(config, row);
-  if (candidates.length === 1) {
-    logStream.write(`renaming downloaded media ${candidates[0]} to ${expectedPath}\n`);
-    await fsp.rename(candidates[0]!, expectedPath);
-    return;
-  }
-
-  throw new Error(
-    `download completed but expected media is missing: ${expectedPath}; found ${candidates.length} media candidates`
-  );
-}
-
 async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<string[]> {
   const dir = downloadDir(config, row.id);
+  const expectedPath = fileMediaPath(config, row);
   let entries: string[];
   try {
     entries = await fsp.readdir(dir);
@@ -362,8 +349,18 @@ async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<
   }
 
   return entries
-    .filter((entry) => /\.(mkv|mp4)$/i.test(entry))
-    .map((entry) => path.join(dir, entry));
+    .filter((entry) => /\.(mkv|mp4|ts)$/i.test(entry))
+    .map((entry) => path.join(dir, entry))
+    .filter((entry) => entry !== expectedPath && !/\.muxing\.mkv$/i.test(entry))
+    .sort((left, right) => mediaArtifactSortKey(left).localeCompare(mediaArtifactSortKey(right)));
+}
+
+function mediaArtifactSortKey(filePath: string): string {
+  const basename = path.basename(filePath);
+  if (isLikelyAudioOnlyArtifact(filePath)) {
+    return `1-${basename}`;
+  }
+  return `0-${basename}`;
 }
 
 async function subtitleSidecars(config: Config, row: FileRow): Promise<string[]> {
