@@ -17,7 +17,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -59,7 +60,10 @@ button.danger:hover:not(:disabled) {
   background: #912018;
 }
 
-input[type='url'] {
+input[type='url'],
+input[type='date'],
+input[type='search'],
+select {
   width: 100%;
   min-height: 40px;
   border: 1px solid #cbd5e1;
@@ -70,6 +74,11 @@ input[type='url'] {
 }
 
 input:focus {
+  border-color: #0f766e;
+  outline: 2px solid rgba(15, 118, 110, 0.18);
+}
+
+select:focus {
   border-color: #0f766e;
   outline: 2px solid rgba(15, 118, 110, 0.18);
 }
@@ -184,6 +193,52 @@ h2 {
   margin-bottom: 14px;
 }
 
+.table-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.table-filters,
+.table-toolbar-actions,
+.bulk-actions,
+.detail-actions,
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.table-filters label,
+.pagination label {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+  color: #526173;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.table-toolbar-actions {
+  justify-content: flex-end;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  background: #f0f9ff;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
 .check {
   display: inline-flex;
   align-items: center;
@@ -262,6 +317,29 @@ th {
   text-transform: uppercase;
 }
 
+tr.selected td {
+  background: #f0fdfa;
+}
+
+.select-col {
+  width: 42px;
+  min-width: 42px;
+}
+
+.select-col input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.table-link {
+  color: #0f5f57;
+  text-decoration: none;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -272,6 +350,28 @@ th {
 .actions button {
   min-height: 32px;
   padding: 0 10px;
+}
+
+.pagination {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.pagination label {
+  grid-template-columns: auto minmax(88px, 1fr);
+  align-items: center;
+  min-width: 0;
+}
+
+.pagination select {
+  min-height: 34px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .status {
@@ -348,8 +448,20 @@ pre {
   }
 
   .watch-form,
-  .summary-grid {
+  .summary-grid,
+  .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .table-toolbar,
+  .bulk-bar,
+  .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-toolbar-actions {
+    justify-content: flex-start;
   }
 
   .actions {

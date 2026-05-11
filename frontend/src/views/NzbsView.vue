@@ -1,15 +1,39 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { deleteNzb, downloadArtifact, listNzbs, readText, retryNzb } from '../api';
-import EmptyState from '../components/EmptyState.vue';
+import BulkActionBar from '../components/BulkActionBar.vue';
+import DataTable from '../components/DataTable.vue';
+import PaginationControls from '../components/PaginationControls.vue';
 import StatusBadge from '../components/StatusBadge.vue';
+import TableToolbar from '../components/TableToolbar.vue';
+import { useJobFilters } from '../composables/useJobFilters';
+import { usePagination } from '../composables/usePagination';
+import { useRowSelection } from '../composables/useRowSelection';
 import { openLog } from '../state/log';
 import { clearMessages, runAction, setError, setNotice } from '../state/messages';
-import type { NzbJob } from '../types';
+import type { JobStatus, NzbJob } from '../types';
+import { bulkSummary, runBulk } from '../utils/bulk';
 import { formatDate, nzbDownloadName } from '../utils/format';
 
 const loading = ref(false);
 const nzbs = ref<NzbJob[]>([]);
+const total = ref(0);
+const { limit, offset, reset, setLimit, setOffset } = usePagination();
+const { selectedIds, selectedRows, toggleRow, toggleVisible, clearSelection } = useRowSelection(nzbs);
+const filters = useJobFilters(() => {
+  reset();
+  clearSelection();
+  void load();
+});
+
+const statusOptions: Array<'all' | JobStatus> = ['all', 'pending', 'running', 'completed', 'failed'];
+const selectedFailed = computed(() => selectedRows.value.filter((nzb) => nzb.status === 'failed'));
+const selectedCompleted = computed(() => selectedRows.value.filter((nzb) => nzb.status === 'completed'));
+
+watch([limit, offset], () => {
+  clearSelection();
+  void load();
+});
 
 async function load(reportErrors = true) {
   loading.value = true;
@@ -17,7 +41,13 @@ async function load(reportErrors = true) {
     clearMessages();
   }
   try {
-    nzbs.value = (await listNzbs()).items;
+    const response = await listNzbs({
+      limit: limit.value,
+      offset: offset.value,
+      ...filters.apiFilters.value
+    });
+    nzbs.value = response.items;
+    total.value = response.total;
   } catch (cause) {
     if (reportErrors) {
       setError(cause);
@@ -54,6 +84,37 @@ async function remove(nzb: NzbJob) {
   });
 }
 
+async function retrySelected() {
+  await runAction(async () => {
+    const result = await runBulk(selectedFailed.value, (nzb) => retryNzb(nzb.id).then(() => undefined));
+    clearSelection();
+    await load(false);
+    setNotice(bulkSummary('Retry', result));
+  });
+}
+
+async function deleteSelected() {
+  const rows = [...selectedRows.value];
+  if (!confirm(`Delete ${rows.length} selected NZB job${rows.length === 1 ? '' : 's'}?`)) {
+    return;
+  }
+  await runAction(async () => {
+    const result = await runBulk(rows, (nzb) => deleteNzb(nzb.id));
+    clearSelection();
+    await load(false);
+    setNotice(bulkSummary('Delete', result));
+  });
+}
+
+async function downloadSelected() {
+  await runAction(async () => {
+    const result = await runBulk(selectedCompleted.value, (nzb) =>
+      downloadArtifact(`/nzb/${nzb.id}/download`, nzbDownloadName(nzb))
+    );
+    setNotice(bulkSummary('Download', result));
+  });
+}
+
 onMounted(load);
 </script>
 
@@ -61,51 +122,88 @@ onMounted(load);
   <section class="panel">
     <div class="section-head">
       <h2>NZBs</h2>
-      <span class="muted">{{ nzbs.length }} jobs</span>
+      <span class="muted">{{ total }} jobs</span>
     </div>
 
-    <EmptyState v-if="nzbs.length === 0" :message="loading ? 'Loading NZB jobs.' : 'No NZB jobs.'" />
-    <div v-else class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>NZB</th>
-            <th>Status</th>
-            <th>Files</th>
-            <th>Created</th>
-            <th>Posted</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="nzb in nzbs" :key="nzb.id">
-            <td>
-              <strong>{{ nzb.nzbFile || nzb.id }}</strong>
-              <span class="subtext">{{ nzb.id }}</span>
-            </td>
-            <td>
-              <StatusBadge :status="nzb.status" />
-              <span v-if="nzb.error" class="subtext">{{ nzb.error }}</span>
-            </td>
-            <td>{{ nzb.files.length }}</td>
-            <td>{{ formatDate(nzb.createdAt) }}</td>
-            <td>{{ formatDate(nzb.postedAt) }}</td>
-            <td class="actions">
-              <button class="secondary" type="button" @click="showLog(nzb)">Log</button>
-              <button
-                class="secondary"
-                type="button"
-                :disabled="nzb.status !== 'completed'"
-                @click="downloadArtifact(`/nzb/${nzb.id}/download`, nzbDownloadName(nzb))"
-              >
-                Download
-              </button>
-              <button class="secondary" type="button" :disabled="nzb.status !== 'failed'" @click="retry(nzb)">Retry</button>
-              <button class="danger" type="button" @click="remove(nzb)">Delete</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <TableToolbar>
+      <label>
+        Status
+        <select v-model="filters.status" @change="filters.applyFilters">
+          <option v-for="status in statusOptions" :key="status" :value="status">{{ status }}</option>
+        </select>
+      </label>
+      <label>
+        Created after
+        <input v-model="filters.createdAfter" type="date" @change="filters.applyFilters" />
+      </label>
+      <label>
+        Created before
+        <input v-model="filters.createdBefore" type="date" @change="filters.applyFilters" />
+      </label>
+      <template #actions>
+        <button class="secondary" type="button" :disabled="loading" @click="filters.clearFilters">Clear filters</button>
+        <button class="secondary" type="button" :disabled="loading" @click="() => load()">Refresh</button>
+      </template>
+    </TableToolbar>
+
+    <BulkActionBar :selected-count="selectedRows.length" @clear="clearSelection">
+      <button class="secondary" type="button" :disabled="selectedFailed.length === 0" @click="retrySelected">Retry</button>
+      <button class="secondary" type="button" :disabled="selectedCompleted.length === 0" @click="downloadSelected">Download</button>
+      <button class="danger" type="button" @click="deleteSelected">Delete</button>
+    </BulkActionBar>
+
+    <DataTable
+      :rows="nzbs"
+      :loading="loading"
+      empty-message="No NZB jobs."
+      selectable
+      :selected-ids="selectedIds"
+      @toggle-row="toggleRow"
+      @toggle-visible="toggleVisible"
+    >
+      <template #header>
+        <th>NZB</th>
+        <th>Status</th>
+        <th>Files</th>
+        <th>Created</th>
+        <th>Posted</th>
+        <th>Actions</th>
+      </template>
+      <template #row="{ row: nzb }">
+        <td>
+          <strong>{{ nzb.nzbFile || nzb.id }}</strong>
+          <span class="subtext">{{ nzb.id }}</span>
+        </td>
+        <td>
+          <StatusBadge :status="nzb.status" />
+          <span v-if="nzb.error" class="subtext">{{ nzb.error }}</span>
+        </td>
+        <td>{{ nzb.files.length }}</td>
+        <td>{{ formatDate(nzb.createdAt) }}</td>
+        <td>{{ formatDate(nzb.postedAt) }}</td>
+        <td class="actions">
+          <button class="secondary" type="button" @click="showLog(nzb)">Log</button>
+          <button
+            class="secondary"
+            type="button"
+            :disabled="nzb.status !== 'completed'"
+            @click="downloadArtifact(`/nzb/${nzb.id}/download`, nzbDownloadName(nzb))"
+          >
+            Download
+          </button>
+          <button class="secondary" type="button" :disabled="nzb.status !== 'failed'" @click="retry(nzb)">Retry</button>
+          <button class="danger" type="button" @click="remove(nzb)">Delete</button>
+        </td>
+      </template>
+    </DataTable>
+
+    <PaginationControls
+      :total="total"
+      :limit="limit"
+      :offset="offset"
+      :disabled="loading"
+      @update:limit="setLimit"
+      @update:offset="setOffset"
+    />
   </section>
 </template>
