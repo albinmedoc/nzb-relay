@@ -13,6 +13,9 @@ export interface Config {
   nzbDir: string;
   logLevel: string;
   stagingMultiplier: number;
+  cors: {
+    origins: '*' | string[];
+  };
   watchlist: {
     pollIntervalSeconds: number;
     reconcileIntervalSeconds: number;
@@ -86,6 +89,7 @@ const envSchema = z
     DATA_DIR: z.string().optional(),
     LOG_LEVEL: z.string().optional(),
     STAGING_MULTIPLIER: z.string().optional(),
+    CORS_ORIGINS: z.string().optional(),
     WATCHLIST_POLL_INTERVAL_SECONDS: z.string().optional(),
     WATCHLIST_RECONCILE_INTERVAL_SECONDS: z.string().optional(),
     WATCHLIST_AUTO_NZB: z.string().optional(),
@@ -126,6 +130,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     nzbDir: path.join(dataDir, 'nzb'),
     logLevel: parsedEnv.LOG_LEVEL ?? 'info',
     stagingMultiplier: readFloat(parsedEnv.STAGING_MULTIPLIER, 2.2, 'STAGING_MULTIPLIER'),
+    cors: {
+      origins: readCorsOrigins(parsedEnv.CORS_ORIGINS)
+    },
     watchlist: {
       pollIntervalSeconds: readPositiveInt(
         parsedEnv.WATCHLIST_POLL_INTERVAL_SECONDS,
@@ -248,6 +255,20 @@ function readBool(value: string | undefined, fallback: boolean): boolean {
       return raw.toLowerCase() === 'true';
     })
     .parse(value);
+}
+
+function readCorsOrigins(value: string | undefined): '*' | string[] {
+  if (!value) {
+    return [];
+  }
+  const origins = value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (origins.includes('*')) {
+    return '*';
+  }
+  return origins;
 }
 
 function readNewsgroups(env: z.infer<typeof envSchema>): string[] {

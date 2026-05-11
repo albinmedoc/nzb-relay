@@ -50,6 +50,66 @@ describe('http api', () => {
     expect(authorized.status).toBe(200);
   });
 
+  it('leaves frontend routes disabled by default', async () => {
+    const response = await app.request('/');
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      code: 'not_found',
+      requestId: expect.any(String)
+    });
+  });
+
+  it('adds CORS headers for allowed frontend origins', async () => {
+    const corsApp = createTestApp(
+      db,
+      testConfig(dataDir, {
+        API_KEY: 'secret',
+        CORS_ORIGINS: 'https://ui.example.test'
+      })
+    );
+
+    const allowed = await corsApp.request('/v1/files', {
+      headers: {
+        authorization: 'Bearer secret',
+        origin: 'https://ui.example.test'
+      }
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://ui.example.test');
+
+    const disallowed = await corsApp.request('/v1/files', {
+      headers: {
+        authorization: 'Bearer secret',
+        origin: 'https://other.example.test'
+      }
+    });
+    expect(disallowed.status).toBe(200);
+    expect(disallowed.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('handles CORS preflight before auth', async () => {
+    const corsApp = createTestApp(
+      db,
+      testConfig(dataDir, {
+        API_KEY: 'secret',
+        CORS_ORIGINS: '*'
+      })
+    );
+
+    const response = await corsApp.request('/v1/files', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://ui.example.test',
+        'access-control-request-headers': 'authorization, content-type'
+      }
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    expect(response.headers.get('access-control-allow-headers')).toBe('Authorization,Content-Type');
+  });
+
   it('omits request logs for health checks', async () => {
     const logs: Array<{ path: string }> = [];
     const logger = {

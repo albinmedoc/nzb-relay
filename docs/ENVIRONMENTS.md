@@ -34,6 +34,7 @@ Set `WEBHOOK_URL` or event-specific webhook URLs only when notifications are wan
 | `VERSION` | no | `0.0.0` | Version returned by `GET /v1/health`. Release images bake the GitHub release tag into this value at build time. |
 | `PORT` | no | `3001` | HTTP listen port. The Docker image exposes `3001`, but the app listens on this value. |
 | `API_KEY` | no | empty | Bearer token required by all `/v1` endpoints except `GET /v1/health` when set. Empty means authentication is disabled. |
+| `CORS_ORIGINS` | no | empty | Comma-separated browser origins allowed to call `/v1/*`, or `*` to allow any origin. Leave empty when the API is not called from a separate frontend origin. |
 | `DATA_DIR` | no | `/data` | Root directory for SQLite, lock file, downloads, NZB files, worker logs, and transient NZB staging. Resolved to an absolute path at startup. |
 | `LOG_LEVEL` | no | `info` | Pino log level. Common values are `trace`, `debug`, `info`, `warn`, `error`, `fatal`, and `silent`. |
 | `STAGING_MULTIPLIER` | no | `2.2` | Positive number used by the NZB worker's free-space preflight. Required free space is approximately `sum(referenced media sizes) * STAGING_MULTIPLIER`. |
@@ -167,6 +168,24 @@ These variables are not part of normal application configuration, but they appea
 | Variable | Scope | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Drizzle tooling | `./data/app.db` | Used by `drizzle.config.ts` for Drizzle Kit commands. The running application does not read this variable; it always opens `<DATA_DIR>/app.db`. |
-| `NODE_VERSION` | Docker image build metadata | Dockerfile `ARG` default | Build argument used in the `node:<version>-slim` base image tag for both build and runtime stages. Renovate tracks the Dockerfile `ARG` through the inline metadata comment. |
+| `NODE_VERSION` | Docker image build metadata | Dockerfile `ARG` default | Build argument used in the `node:<version>-slim` base image tag. Renovate tracks the Dockerfile `ARG` comments in both Dockerfiles. |
 | `NODE_ENV` | Docker image / Node ecosystem | `production` in the runtime image | Set by the Dockerfile. The application code does not branch on it directly. |
 | `SVTPLAY_DL_VERSION` | Docker image build/runtime metadata | Dockerfile `ARG` default | Build argument used to pin the installed `svtplay-dl` package version. The value is also exposed as an environment variable in the built image for inspection. Use `latest` only for ad-hoc testing. |
+
+## Frontend Configuration
+
+The separate frontend image builds the Vue app and serves it with Vite preview. The frontend server reads Basic Auth on each browser request and serves a generated `/config.js` for that request. The browser app does not read `BACKEND_URL`, `BACKEND_TOKEN`, query parameters, or `localStorage`.
+
+| Variable | Required | Default | Description |
+|---|---:|---|---|
+| `FRONTEND_PORT` | no | `8080` | Port used by the Vite preview server inside the frontend container. |
+
+Set the dashboard backend URL and token with Basic Auth credentials. The username is the backend URL and the password is the backend API key. When using credentials in the URL, percent-encode the backend URL:
+
+```text
+http://http%3A%2F%2Flocalhost%3A3001:<API_KEY>@localhost:8080/#/dashboard
+```
+
+The frontend server uses the Basic Auth username as the backend URL, uses the Basic Auth password as the bearer token for backend API calls, and does not persist either value in browser storage. Omit the username to use same-origin `/v1`.
+
+Visit `/logout` to force a Basic Auth challenge when you need to enter different credentials. Browser behavior differs, so cancelling the challenge may still leave existing credentials active in some browsers.

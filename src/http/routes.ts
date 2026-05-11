@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { Config } from '../config.js';
@@ -79,6 +80,11 @@ export function createApp({
   app.use('*', requestLoggingMiddleware(logger));
 
   const v1 = new Hono();
+  if (config.cors.origins === '*') {
+    v1.use('*', cors(corsOptions('*')));
+  } else if (config.cors.origins.length > 0) {
+    v1.use('*', cors(corsOptions(config.cors.origins)));
+  }
   v1.get('/health', (c) => c.json({ status: 'ok', version: config.version }));
   v1.use('*', authMiddleware(config));
 
@@ -437,6 +443,15 @@ export function createApp({
   });
 
   return app;
+}
+
+function corsOptions(origin: '*' | string[]) {
+  return {
+    origin,
+    allowHeaders: ['Authorization', 'Content-Type'],
+    allowMethods: ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    maxAge: 600
+  };
 }
 
 function serializeFile(row: FileRow) {

@@ -40,10 +40,19 @@ describe('config and templates', () => {
     });
 
     expect(config.port).toBe(3001);
+    expect(config.cors.origins).toEqual([]);
     expect(config.usenet.newsgroups).toEqual(DEFAULT_USENET_NEWSGROUPS);
     expect(config.usenet.newsgroupsPerUpload).toBe(20);
     expect(resolveWebhookUrl(config, 'download.completed')).toBe('https://example.test/all');
     expect(resolveWebhookUrl(config, 'nzb.failed')).toBe('https://example.test/nzb-failed');
+  });
+
+  it('loads optional CORS origins', () => {
+    expect(loadConfig({ CORS_ORIGINS: 'https://ui.example.test, http://localhost:8080' }).cors.origins).toEqual([
+      'https://ui.example.test',
+      'http://localhost:8080'
+    ]);
+    expect(loadConfig({ CORS_ORIGINS: '*' }).cors.origins).toBe('*');
   });
 
   it('uses USENET_NEWSGROUPS and accepts previous variable names as fallbacks', () => {
@@ -106,6 +115,7 @@ describe('config and templates', () => {
         season: 3,
         episode: 1,
         filename: 'ignored.mkv',
+        createdAt: '2026-05-01T00:00:00.000Z',
         downloadedAt: null,
         deleted: 0
       })

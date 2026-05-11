@@ -7,8 +7,9 @@
 - SQLite for durable job state
 - A built-in watchlist for polling supported series
 - Webhooks for completion and failure notifications
+- A separate Vue web dashboard image
 
-The service has no UI. It can monitor supported series itself through the watchlist API, or be driven by an external orchestrator such as n8n, cron-backed scripts, or another REST client.
+The backend can monitor supported series itself through the watchlist API or be driven by an external orchestrator such as n8n, cron-backed scripts, or another REST client. The Vue dashboard runs as a separate frontend container and talks to the backend over HTTP.
 
 For the HTTP contract, see [docs/API.md](docs/API.md). Runtime configuration is documented in
 [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md). An optional n8n setup is documented in
@@ -35,7 +36,7 @@ RAR is proprietary and the official RARLAB command-line Linux package is availab
 
 The container downloads the pinned RAR binary on first start if `/usr/local/bin/rar` is missing.
 
-The Docker image pins Node.js and `svtplay-dl` at build time. To build with different versions:
+The backend Docker image pins Node.js and `svtplay-dl` at build time. To build with different versions:
 
 ```sh
 docker build \
@@ -43,6 +44,14 @@ docker build \
   --build-arg SVTPLAY_DL_VERSION=4.179 \
   -t nzb-relay .
 ```
+
+Build the frontend image separately:
+
+```sh
+docker build -f frontend/Dockerfile -t nzb-relay-frontend .
+```
+
+The frontend image builds the Vue app with Vite and runs a small Vite preview server that derives frontend runtime config from Basic Auth.
 
 Use `SVTPLAY_DL_VERSION=latest` only for ad-hoc testing; release images should use the explicit defaults in the Dockerfile. Renovate updates those Dockerfile `ARG` values through the inline `renovate` metadata comments.
 
@@ -66,7 +75,16 @@ See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) for the full list of supported 
 
 `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups and can be set to a comma-separated list to override them. `USENET_NEWSGROUPS_PER_UPLOAD` defaults to `20`; each upload randomly picks that many groups so providers with a 20-group crosspost limit do not reject posts.
 
-The service listens on `http://localhost:3001` by default. Health is available at:
+The service listens on `http://localhost:3001` by default. Health is available at `http://localhost:3001/v1/health`.
+The frontend listens on `http://localhost:8080` in the compose example. If the frontend is served from a different origin, set backend `CORS_ORIGINS` to that browser origin.
+Open the frontend with Basic Auth credentials where the username is the backend URL and the password is the API key. When using credentials in the URL, percent-encode the backend URL:
+
+```text
+http://http%3A%2F%2Flocalhost%3A3001:<API_KEY>@localhost:8080/#/dashboard
+```
+
+The frontend does not accept backend URL or token query parameters and does not store credentials in `localStorage`.
+Use `/logout` to force a Basic Auth challenge when you need to enter different credentials.
 
 ## Storage
 
@@ -91,7 +109,7 @@ Mount `DATA_DIR` as a persistent volume in production.
 
 ## Release Images
 
-The GitHub Actions workflow builds and pushes to GitHub Container Registry when a GitHub release is published.
+The GitHub Actions workflow builds and pushes backend and frontend images to GitHub Container Registry when a GitHub release is published.
 The same release tag is baked into the image as `VERSION`, which is returned by `GET /v1/health`.
 
 For a non-prerelease release tag such as `v1.1.1`, the workflow publishes:
@@ -100,3 +118,7 @@ For a non-prerelease release tag such as `v1.1.1`, the workflow publishes:
 - `ghcr.io/<owner>/<repo>:v1.1`
 - `ghcr.io/<owner>/<repo>:v1.1.1`
 - `ghcr.io/<owner>/<repo>:latest`
+- `ghcr.io/<owner>/<repo>-frontend:v1`
+- `ghcr.io/<owner>/<repo>-frontend:v1.1`
+- `ghcr.io/<owner>/<repo>-frontend:v1.1.1`
+- `ghcr.io/<owner>/<repo>-frontend:latest`
