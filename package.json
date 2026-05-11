@@ -5,17 +5,19 @@
   "type": "module",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "pnpm run build:shared && tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "pnpm run build:server && pnpm run build:frontend",
-    "build:server": "tsc -p tsconfig.build.json",
+    "build:shared": "pnpm --filter @nzb-relay/shared build",
+    "build:server": "pnpm run build:shared && tsc -p tsconfig.build.json",
     "build:frontend": "pnpm --filter nzb-relay-frontend build",
     "dev:frontend": "pnpm --filter nzb-relay-frontend dev",
-    "test": "vitest run",
+    "test": "pnpm run build:shared && vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@nzb-relay/shared": "workspace:*",
     "@hono/node-server": "^1.13.8",
     "better-sqlite3": "^11.7.0",
     "drizzle-orm": "^0.38.4",

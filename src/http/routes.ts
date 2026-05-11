@@ -6,6 +6,25 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Logger } from 'pino';
 import { z } from 'zod';
+import {
+  createDownloadRequestSchema,
+  createNzbRequestSchema,
+  createWatchlistSourceRequestSchema,
+  jobStatusSchema,
+  updateWatchlistSourceRequestSchema,
+  type CreateDownloadResponse,
+  type CreateNzbResponse,
+  type FileJobResponse,
+  type HealthResponse,
+  type NzbJobResponse,
+  type RetryFileResponse,
+  type RetryNzbResponse,
+  type RetryWatchlistSourceResponse,
+  type WatchlistEpisodeResponse,
+  type WatchlistSourceDetailResponse,
+  type WatchlistSourceResponse,
+  type WatchlistSourceSummaryResponse
+} from '@nzb-relay/shared';
 import type { Config } from '../config.js';
 import type { AppDatabase } from '../db/client.js';
 import {
@@ -85,7 +104,7 @@ export function createApp({
   } else if (config.cors.origins.length > 0) {
     v1.use('*', cors(corsOptions(config.cors.origins)));
   }
-  v1.get('/health', (c) => c.json({ status: 'ok', version: config.version }));
+  v1.get('/health', (c) => c.json({ status: 'ok', version: config.version } satisfies HealthResponse));
   v1.use('*', authMiddleware(config));
 
   v1.get('/svtplay/serie/:slug', async (c) => {
@@ -130,7 +149,7 @@ export function createApp({
         filename
       });
       await ensureFileLog(config, row);
-      return c.json({ fileId: row.id, status: row.status }, 202);
+      return c.json({ fileId: row.id, status: row.status } satisfies CreateDownloadResponse, 202);
     } catch (error) {
       if (isSqliteUniqueConstraint(error)) {
         return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
@@ -194,7 +213,7 @@ export function createApp({
     return c.json({
       ...serializeWatchlistSource(source),
       episodes: listWatchlistEpisodesForSource(db, source.id).map(serializeWatchlistEpisode)
-    });
+    } satisfies WatchlistSourceDetailResponse);
   });
 
   v1.patch('/watchlist/:sourceId', async (c) => {
@@ -231,7 +250,7 @@ export function createApp({
     }
 
     const retried = retryFailedWatchlistEpisodesForSource(db, source.id);
-    return c.json({ sourceId: source.id, retried }, 202);
+    return c.json({ sourceId: source.id, retried } satisfies RetryWatchlistSourceResponse, 202);
   });
 
   v1.get('/files', (c) => {
@@ -287,7 +306,7 @@ export function createApp({
     if (!retryFailedFile(db, row.id)) {
       return errorResponse(c, 409, 'file_not_failed', 'file is not failed');
     }
-    return c.json({ fileId: row.id, status: 'pending' }, 202);
+    return c.json({ fileId: row.id, status: 'pending' } satisfies RetryFileResponse, 202);
   });
 
   v1.get('/files/:fileId', (c) => {
@@ -351,7 +370,7 @@ export function createApp({
     });
     await ensureNzbLog(config, row);
 
-    return c.json({ nzbId: row.id, status: row.status }, 202);
+    return c.json({ nzbId: row.id, status: row.status } satisfies CreateNzbResponse, 202);
   });
 
   v1.get('/nzb', (c) => {
@@ -407,7 +426,7 @@ export function createApp({
     if (!retryFailedNzb(db, row.id)) {
       return errorResponse(c, 409, 'nzb_not_failed', 'NZB is not failed');
     }
-    return c.json({ nzbId: row.id, status: 'pending' }, 202);
+    return c.json({ nzbId: row.id, status: 'pending' } satisfies RetryNzbResponse, 202);
   });
 
   v1.get('/nzb/:nzbId', (c) => {
@@ -454,7 +473,7 @@ function corsOptions(origin: '*' | string[]) {
   };
 }
 
-function serializeFile(row: FileRow) {
+function serializeFile(row: FileRow): FileJobResponse {
   return {
     id: row.id,
     url: row.url,
@@ -468,7 +487,7 @@ function serializeFile(row: FileRow) {
   };
 }
 
-function serializeNzb(db: AppDatabase, row: NzbRow) {
+function serializeNzb(db: AppDatabase, row: NzbRow): NzbJobResponse {
   return {
     id: row.id,
     status: row.status,
@@ -487,7 +506,7 @@ function serializeNzb(db: AppDatabase, row: NzbRow) {
   };
 }
 
-function serializeWatchlistSource(row: WatchlistSourceRow) {
+function serializeWatchlistSource(row: WatchlistSourceRow): WatchlistSourceResponse {
   return {
     id: row.id,
     service: row.service,
@@ -507,7 +526,7 @@ function serializeWatchlistSource(row: WatchlistSourceRow) {
   };
 }
 
-function serializeWatchlistSourceSummary(row: WatchlistSourceSummary) {
+function serializeWatchlistSourceSummary(row: WatchlistSourceSummary): WatchlistSourceSummaryResponse {
   return {
     ...serializeWatchlistSource(row),
     episodeCount: Number(row.episodeCount),
@@ -517,7 +536,7 @@ function serializeWatchlistSourceSummary(row: WatchlistSourceSummary) {
   };
 }
 
-function serializeWatchlistEpisode(row: WatchlistEpisodeRow) {
+function serializeWatchlistEpisode(row: WatchlistEpisodeRow): WatchlistEpisodeResponse {
   return {
     id: row.id,
     sourceId: row.sourceId,
@@ -543,9 +562,6 @@ function serializeWatchlistEpisode(row: WatchlistEpisodeRow) {
 }
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
-const nonEmptyStringSchema = z.string().trim().min(1);
-const optionalEpisodeNumberSchema = z.number().int().nullable().optional();
-const jobStatusSchema: z.ZodType<JobStatus> = z.enum(['pending', 'running', 'completed', 'failed']);
 const paginationQuerySchema = z
   .object({
     limit: z.string().optional().transform((value) => clampParsedInt(value, 20, 1, 100)),
@@ -582,15 +598,7 @@ function validateDownloadBody(body: Record<string, unknown>):
       };
     }
   | { ok: false; code: string; error: string } {
-  const required = z
-    .object({
-      url: nonEmptyStringSchema,
-      title: nonEmptyStringSchema,
-      service: nonEmptyStringSchema,
-      quality: nonEmptyStringSchema
-    })
-    .passthrough()
-    .safeParse(body);
+  const required = createDownloadRequestSchema.pick({ url: true, title: true, service: true, quality: true }).safeParse(body);
   if (!required.success) {
     return { ok: false, code: 'missing_required_param', error: 'missing required parameter' };
   }
@@ -603,13 +611,7 @@ function validateDownloadBody(body: Record<string, unknown>):
     return { ok: false, code: 'malformed_quality', error: 'quality is malformed' };
   }
 
-  const episodeMetadata = z
-    .object({
-      season: optionalEpisodeNumberSchema,
-      episode: optionalEpisodeNumberSchema
-    })
-    .passthrough()
-    .safeParse(body);
+  const episodeMetadata = createDownloadRequestSchema.pick({ season: true, episode: true }).safeParse(body);
   if (!episodeMetadata.success) {
     return { ok: false, code: 'invalid_episode_metadata', error: 'season and episode must be integers' };
   }
@@ -635,17 +637,17 @@ function validateDownloadBody(body: Record<string, unknown>):
 function validateWatchlistBody(body: Record<string, unknown>):
   | { ok: true; value: { url: string; backfill: boolean; deleteFileAfterNzb: boolean } }
   | { ok: false; code: string; error: string } {
-  const url = nonEmptyStringSchema.safeParse(body.url);
+  const url = createWatchlistSourceRequestSchema.pick({ url: true }).safeParse(body);
   if (!url.success) {
     return { ok: false, code: 'missing_required_param', error: 'missing required parameter' };
   }
 
-  const backfill = z.boolean().nullish().safeParse(body.backfill);
+  const backfill = createWatchlistSourceRequestSchema.pick({ backfill: true }).safeParse(body);
   if (!backfill.success) {
     return { ok: false, code: 'invalid_backfill', error: 'backfill must be a boolean' };
   }
 
-  const deleteFileAfterNzb = z.boolean().nullish().safeParse(body.deleteFileAfterNzb);
+  const deleteFileAfterNzb = createWatchlistSourceRequestSchema.pick({ deleteFileAfterNzb: true }).safeParse(body);
   if (!deleteFileAfterNzb.success) {
     return { ok: false, code: 'invalid_delete_file_after_nzb', error: 'deleteFileAfterNzb must be a boolean' };
   }
@@ -653,9 +655,9 @@ function validateWatchlistBody(body: Record<string, unknown>):
   return {
     ok: true,
     value: {
-      url: url.data,
-      backfill: backfill.data ?? true,
-      deleteFileAfterNzb: deleteFileAfterNzb.data ?? true
+      url: url.data.url,
+      backfill: backfill.data.backfill ?? true,
+      deleteFileAfterNzb: deleteFileAfterNzb.data.deleteFileAfterNzb ?? true
     }
   };
 }
@@ -667,29 +669,29 @@ function validateWatchlistPatchBody(body: Record<string, unknown>):
   let fields = 0;
 
   if ('enabled' in body) {
-    const enabled = z.boolean().safeParse(body.enabled);
+    const enabled = updateWatchlistSourceRequestSchema.pick({ enabled: true }).safeParse(body);
     if (!enabled.success) {
       return { ok: false, code: 'invalid_enabled', error: 'enabled must be a boolean' };
     }
-    value.enabled = enabled.data;
+    value.enabled = enabled.data.enabled;
     fields += 1;
   }
 
   if ('deleteFileAfterNzb' in body) {
-    const deleteFileAfterNzb = z.boolean().safeParse(body.deleteFileAfterNzb);
+    const deleteFileAfterNzb = updateWatchlistSourceRequestSchema.pick({ deleteFileAfterNzb: true }).safeParse(body);
     if (!deleteFileAfterNzb.success) {
       return { ok: false, code: 'invalid_delete_file_after_nzb', error: 'deleteFileAfterNzb must be a boolean' };
     }
-    value.deleteFileAfterNzb = deleteFileAfterNzb.data;
+    value.deleteFileAfterNzb = deleteFileAfterNzb.data.deleteFileAfterNzb;
     fields += 1;
   }
 
   if ('title' in body) {
-    const title = nonEmptyStringSchema.safeParse(body.title);
+    const title = updateWatchlistSourceRequestSchema.pick({ title: true }).safeParse(body);
     if (!title.success) {
       return { ok: false, code: 'invalid_title', error: 'title must be a non-empty string' };
     }
-    value.title = title.data;
+    value.title = title.data.title;
     fields += 1;
   }
 
@@ -703,12 +705,12 @@ function validateWatchlistPatchBody(body: Record<string, unknown>):
 function validateNzbBody(body: Record<string, unknown>):
   | { ok: true; fileIds: string[]; name: string }
   | { ok: false; code: string; error: string } {
-  const fileIdsValidation = z.array(nonEmptyStringSchema).safeParse(body.fileIds);
-  if (!fileIdsValidation.success || fileIdsValidation.data.length === 0) {
+  const fileIdsValidation = createNzbRequestSchema.pick({ fileIds: true }).safeParse(body);
+  if (!fileIdsValidation.success || fileIdsValidation.data.fileIds.length === 0) {
     return { ok: false, code: 'empty_list', error: 'fileIds must be a non-empty array' };
   }
 
-  const fileIds = fileIdsValidation.data;
+  const fileIds = fileIdsValidation.data.fileIds;
   if (new Set(fileIds).size !== fileIds.length) {
     return { ok: false, code: 'duplicate_file_id', error: 'fileIds contains a duplicate fileId' };
   }

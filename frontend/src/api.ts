@@ -1,11 +1,13 @@
 import { apiBase, backendToken } from './runtime';
 import type {
+  CreateWatchlistSourceRequest,
   FileJob,
   Health,
   JobListParams,
   ListParams,
   ListResponse,
   NzbJob,
+  UpdateWatchlistSourceRequest,
   WatchlistSource,
   WatchlistSourceDetail
 } from './types';
@@ -46,7 +48,7 @@ export function listWatchlist(params: ListParams = {}): Promise<ListResponse<Wat
   return requestJson<ListResponse<WatchlistSource>>(`/watchlist${toQuery({ limit: 20, ...params })}`);
 }
 
-export function createWatchlistSource(input: { url: string; backfill: boolean; deleteFileAfterNzb: boolean }): Promise<WatchlistSource> {
+export function createWatchlistSource(input: CreateWatchlistSourceRequest): Promise<WatchlistSource> {
   return requestJson<WatchlistSource>('/watchlist', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -56,7 +58,7 @@ export function createWatchlistSource(input: { url: string; backfill: boolean; d
 
 export function updateWatchlistSource(
   sourceId: string,
-  patch: Partial<Pick<WatchlistSource, 'enabled' | 'deleteFileAfterNzb'>>
+  patch: UpdateWatchlistSourceRequest
 ): Promise<WatchlistSource> {
   return requestJson<WatchlistSource>(`/watchlist/${sourceId}`, {
     method: 'PATCH',

@@ -1,16 +1,7 @@
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
+import type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType } from '@nzb-relay/shared';
+
+export type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType };
 export type WebhookStatus = 'pending' | 'delivered' | 'failed';
-export type WatchlistSourceType = 'series';
-export type WatchlistEpisodeStatus =
-  | 'seen'
-  | 'discovered'
-  | 'download_queued'
-  | 'download_failed'
-  | 'download_completed'
-  | 'nzb_queued'
-  | 'nzb_failed'
-  | 'posted'
-  | 'blocked';
 
 export type ErrorCode =
   | 'insufficient_space'
