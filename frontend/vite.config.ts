@@ -8,8 +8,10 @@ interface BasicAuthCredentials {
 }
 
 const AUTH_REALM = 'Basic realm="nzb-relay", charset="UTF-8"';
+const allowedHost = process.env.FRONTEND_ALLOWED_HOST?.trim();
 
 export default defineConfig({
+  ...(allowedHost ? { preview: { allowedHosts: [allowedHost] } } : {}),
   plugins: [runtimeConfigPlugin(), vue()]
 });
 
