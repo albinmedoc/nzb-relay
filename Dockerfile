@@ -5,16 +5,18 @@ FROM node:${NODE_VERSION}-slim AS backend-deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/package.json
 RUN pnpm install --frozen-lockfile --filter .
 
 FROM backend-deps AS backend-builder
 
 WORKDIR /app
 COPY tsconfig.json tsconfig.build.json drizzle.config.ts ./
+COPY packages/shared ./packages/shared
 COPY src ./src
 COPY drizzle ./drizzle
 RUN pnpm run build:server
-RUN pnpm prune --prod
+RUN CI=true pnpm prune --prod
 
 FROM node:${NODE_VERSION}-slim AS backend
 
@@ -39,6 +41,7 @@ RUN set -eux; \
 COPY --from=backend-builder /app/node_modules ./node_modules
 COPY --from=backend-builder /app/dist ./dist
 COPY --from=backend-builder /app/drizzle ./drizzle
+COPY --from=backend-builder /app/packages/shared ./packages/shared
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 

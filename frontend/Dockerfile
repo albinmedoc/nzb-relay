@@ -6,12 +6,14 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/package.json ./frontend/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
 RUN pnpm install --frozen-lockfile --filter nzb-relay-frontend...
 
 FROM deps AS builder
 
 WORKDIR /app
 COPY frontend ./frontend
+COPY packages/shared ./packages/shared
 RUN pnpm --filter nzb-relay-frontend build
 
 FROM node:${NODE_VERSION}-slim AS runtime
@@ -21,8 +23,10 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/package.json frontend/vite.config.ts ./frontend/
+COPY packages/shared/package.json ./packages/shared/package.json
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
+COPY --from=builder /app/packages/shared ./packages/shared
 COPY --from=builder /app/frontend/dist ./frontend/dist
 WORKDIR /app/frontend
 EXPOSE 8080
