@@ -8,6 +8,8 @@ import type { Logger } from 'pino';
 import { z } from 'zod';
 import {
   createDownloadRequestSchema,
+  createFileArchiveRequestSchema,
+  createNzbArchiveRequestSchema,
   createNzbRequestSchema,
   createWatchlistSourceRequestSchema,
   jobStatusSchema,
@@ -61,6 +63,7 @@ import {
   renderDownloadFilename,
   sanitizeToken
 } from '../utils/templates.js';
+import { streamZip, type ZipEntry } from '../utils/zip.js';
 import { authMiddleware, requestLoggingMiddleware } from './middleware.js';
 import { errorResponse, isSqliteUniqueConstraint } from './errors.js';
 import { defaultWatchProviders, resolveWatchProvider, type WatchProvider } from '../watchlist/providers.js';
@@ -268,6 +271,41 @@ export function createApp({
     });
   });
 
+  v1.post('/files/archive', async (c) => {
+    const body = await readJsonObject(c);
+    if (!body.ok) {
+      return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
+    }
+
+    const validation = validateFileArchiveBody(body.value);
+    if (!validation.ok) {
+      return errorResponse(c, 400, validation.code, validation.error);
+    }
+
+    const entries: ZipEntry[] = [];
+    const names = uniqueArchiveNames();
+    for (const fileId of validation.fileIds) {
+      const row = getFile(db, fileId);
+      if (!row) {
+        return errorResponse(c, 404, 'not_found', `file not found: ${fileId}`);
+      }
+      if (row.deleted) {
+        return errorResponse(c, 409, 'file_deleted', `file is deleted: ${fileId}`);
+      }
+      if (row.status !== 'completed') {
+        return errorResponse(c, 409, 'not_ready', `file is not ready: ${fileId}`);
+      }
+      const filePath = fileMediaPath(config, row);
+      const stat = await statArtifact(c, filePath);
+      if (!stat.ok) {
+        return stat.response;
+      }
+      entries.push({ name: names(row.filename), path: filePath, size: stat.size });
+    }
+
+    return streamZipResponse(c, entries, 'nzb-relay-files.zip');
+  });
+
   v1.get('/files/:fileId/download', async (c) => {
     const row = getFile(db, c.req.param('fileId'));
     if (!row || row.deleted) {
@@ -386,6 +424,38 @@ export function createApp({
       limit,
       offset
     });
+  });
+
+  v1.post('/nzb/archive', async (c) => {
+    const body = await readJsonObject(c);
+    if (!body.ok) {
+      return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
+    }
+
+    const validation = validateNzbArchiveBody(body.value);
+    if (!validation.ok) {
+      return errorResponse(c, 400, validation.code, validation.error);
+    }
+
+    const entries: ZipEntry[] = [];
+    const names = uniqueArchiveNames();
+    for (const nzbId of validation.nzbIds) {
+      const row = getNzb(db, nzbId);
+      if (!row) {
+        return errorResponse(c, 404, 'not_found', `nzb not found: ${nzbId}`);
+      }
+      if (row.status !== 'completed') {
+        return errorResponse(c, 409, 'not_ready', `NZB is not ready: ${nzbId}`);
+      }
+      const filePath = nzbFinalPath(config, row);
+      const stat = await statArtifact(c, filePath);
+      if (!stat.ok) {
+        return stat.response;
+      }
+      entries.push({ name: names(`${row.releaseName}.nzb`), path: filePath, size: stat.size });
+    }
+
+    return streamZipResponse(c, entries, 'nzb-relay-nzbs.zip');
   });
 
   v1.get('/nzb/:nzbId/download', async (c) => {
@@ -723,6 +793,32 @@ function validateNzbBody(body: Record<string, unknown>):
   return { ok: true, fileIds, name };
 }
 
+function validateFileArchiveBody(body: Record<string, unknown>):
+  | { ok: true; fileIds: string[] }
+  | { ok: false; code: string; error: string } {
+  const validation = createFileArchiveRequestSchema.safeParse(body);
+  if (!validation.success) {
+    return { ok: false, code: 'empty_list', error: 'fileIds must be a non-empty array' };
+  }
+  if (new Set(validation.data.fileIds).size !== validation.data.fileIds.length) {
+    return { ok: false, code: 'duplicate_file_id', error: 'fileIds contains a duplicate fileId' };
+  }
+  return { ok: true, fileIds: validation.data.fileIds };
+}
+
+function validateNzbArchiveBody(body: Record<string, unknown>):
+  | { ok: true; nzbIds: string[] }
+  | { ok: false; code: string; error: string } {
+  const validation = createNzbArchiveRequestSchema.safeParse(body);
+  if (!validation.success) {
+    return { ok: false, code: 'empty_list', error: 'nzbIds must be a non-empty array' };
+  }
+  if (new Set(validation.data.nzbIds).size !== validation.data.nzbIds.length) {
+    return { ok: false, code: 'duplicate_nzb_id', error: 'nzbIds contains a duplicate nzbId' };
+  }
+  return { ok: true, nzbIds: validation.data.nzbIds };
+}
+
 function validateNzbFileStates(db: AppDatabase, fileIds: string[]):
   | { ok: true; files: FileRow[] }
   | { ok: false; status: 409; code: string; error: string } {
@@ -875,6 +971,40 @@ async function streamFile(c: Context, filePath: string, contentType: string, fil
     'content-length': String(stat.size),
     'content-disposition': `attachment; filename="${filename.replaceAll('"', '')}"`
   });
+}
+
+async function statArtifact(c: Context, filePath: string): Promise<{ ok: true; size: number } | { ok: false; response: Response }> {
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile()) {
+      return { ok: false, response: errorResponse(c, 500, 'artifact_missing', 'artifact missing on disk') };
+    }
+    return { ok: true, size: stat.size };
+  } catch {
+    return { ok: false, response: errorResponse(c, 500, 'artifact_missing', 'artifact missing on disk') };
+  }
+}
+
+function streamZipResponse(c: Context, entries: ZipEntry[], filename: string): Response {
+  return c.body(Readable.toWeb(Readable.from(streamZip(entries))) as ReadableStream, 200, {
+    'content-type': 'application/zip',
+    'content-disposition': `attachment; filename="${filename.replaceAll('"', '')}"`
+  });
+}
+
+function uniqueArchiveNames(): (name: string) => string {
+  const seen = new Map<string, number>();
+  return (name: string) => {
+    const safeName = path.basename(name).replaceAll('"', '') || 'artifact';
+    const count = seen.get(safeName) ?? 0;
+    seen.set(safeName, count + 1);
+    if (count === 0) {
+      return safeName;
+    }
+    const extension = path.extname(safeName);
+    const base = extension ? safeName.slice(0, -extension.length) : safeName;
+    return `${base}-${count + 1}${extension}`;
+  };
 }
 
 async function readTextLog(c: Context, logPath: string): Promise<Response> {

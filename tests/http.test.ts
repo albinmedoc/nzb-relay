@@ -508,6 +508,50 @@ describe('http api', () => {
     });
   });
 
+  it('streams a ZIP archive for completed file artifacts', async () => {
+    const row = createFile('https://example.test/archive-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run('2026-05-06T00:00:00.000Z', row.id);
+    await writeFileArtifact(row, 'media');
+
+    const response = await app.request('/v1/files/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ fileIds: [row.id] })
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/zip');
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 4).toString('hex')).toBe('504b0304');
+  });
+
+  it('rejects file archives with empty or not-ready file IDs', async () => {
+    const empty = await app.request('/v1/files/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ fileIds: [] })
+    });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({ code: 'empty_list' });
+
+    const pending = createFile('https://example.test/archive-pending-file');
+    const notReady = await app.request('/v1/files/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ fileIds: [pending.id] })
+    });
+    expect(notReady.status).toBe(409);
+    expect(await notReady.json()).toMatchObject({ code: 'not_ready' });
+  });
+
   it('rejects file retry unless the file is failed, active, and URL-unique', async () => {
     const pending = createFile('https://example.test/retry-pending');
     const pendingResponse = await app.request(`/v1/files/${pending.id}/retry`, {
@@ -624,6 +668,60 @@ describe('http api', () => {
     expect(deletedFileResponse.status).toBe(409);
     expect(await deletedFileResponse.json()).toMatchObject({ code: 'file_deleted' });
   });
+
+  it('streams a ZIP archive for completed NZB artifacts', async () => {
+    const file = createFile('https://example.test/archive-nzb-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Archive.Nzb', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run('2026-05-06T01:00:00.000Z', nzb.id);
+    await writeNzbArtifact(nzb, '<nzb />');
+
+    const response = await app.request('/v1/nzb/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ nzbIds: [nzb.id] })
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/zip');
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 4).toString('hex')).toBe('504b0304');
+  });
+
+  it('rejects NZB archives with empty or not-ready NZB IDs', async () => {
+    const empty = await app.request('/v1/nzb/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ nzbIds: [] })
+    });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({ code: 'empty_list' });
+
+    const file = createFile('https://example.test/archive-pending-nzb-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Pending.Archive.Nzb', fileIds: [file.id] });
+    const notReady = await app.request('/v1/nzb/archive', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ nzbIds: [nzb.id] })
+    });
+    expect(notReady.status).toBe(409);
+    expect(await notReady.json()).toMatchObject({ code: 'not_ready' });
+  });
 });
 
 function postDownload(body: Record<string, unknown>) {
@@ -647,6 +745,18 @@ function createFile(url: string) {
     season: null,
     episode: null
   });
+}
+
+async function writeFileArtifact(file: { id: string; filename: string }, content: string) {
+  const filePath = path.join(config.downloadsDir, file.id, file.filename);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content);
+}
+
+async function writeNzbArtifact(nzb: { nzbFile: string }, content: string) {
+  const filePath = path.join(config.nzbDir, nzb.nzbFile);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content);
 }
 
 function createWatchlistSource(url = 'https://example.test/source') {

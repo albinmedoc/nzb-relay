@@ -381,6 +381,12 @@ tr.selected td {
   margin-bottom: 12px;
 }
 
+.bulk-download-dialog {
+  display: grid;
+  gap: 14px;
+  max-width: 520px;
+}
+
 .status {
   display: inline-flex;
   align-items: center;

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { deleteFile, downloadArtifact, listFiles, readText, retryFile } from '../api';
+import { deleteFile, downloadArtifact, downloadFileArchive, listFiles, readText, retryFile } from '../api';
 import BulkActionBar from '../components/BulkActionBar.vue';
+import BulkDownloadDialog from '../components/BulkDownloadDialog.vue';
 import DataTable from '../components/DataTable.vue';
 import PaginationControls from '../components/PaginationControls.vue';
 import StatusBadge from '../components/StatusBadge.vue';
@@ -29,6 +30,7 @@ const filters = useJobFilters(() => {
 const statusOptions: Array<'all' | JobStatus> = ['all', 'pending', 'running', 'completed', 'failed'];
 const selectedFailed = computed(() => selectedRows.value.filter((file) => file.status === 'failed'));
 const selectedCompleted = computed(() => selectedRows.value.filter((file) => file.status === 'completed'));
+const showDownloadDialog = ref(false);
 
 watch([limit, offset], () => {
   clearSelection();
@@ -107,9 +109,22 @@ async function deleteSelected() {
 }
 
 async function downloadSelected() {
+  showDownloadDialog.value = true;
+}
+
+async function downloadSelectedIndividually() {
+  showDownloadDialog.value = false;
   await runAction(async () => {
     const result = await runBulk(selectedCompleted.value, (file) => downloadArtifact(`/files/${file.id}/download`, file.filename));
     setNotice(bulkSummary('Download', result));
+  });
+}
+
+async function downloadSelectedZip() {
+  showDownloadDialog.value = false;
+  await runAction(async () => {
+    await downloadFileArchive(selectedCompleted.value.map((file) => file.id));
+    setNotice(`ZIP download started for ${selectedCompleted.value.length} item${selectedCompleted.value.length === 1 ? '' : 's'}.`);
   });
 }
 
@@ -201,6 +216,15 @@ onMounted(load);
       :disabled="loading"
       @update:limit="setLimit"
       @update:offset="setOffset"
+    />
+
+    <BulkDownloadDialog
+      v-if="showDownloadDialog"
+      :count="selectedCompleted.length"
+      label="download"
+      @individual="downloadSelectedIndividually"
+      @zip="downloadSelectedZip"
+      @cancel="showDownloadDialog = false"
     />
   </section>
 </template>

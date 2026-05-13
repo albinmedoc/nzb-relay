@@ -394,6 +394,28 @@ Status codes:
 
 Range requests are not supported. The server ignores `Range` and returns the full body.
 
+### `POST /v1/files/archive`
+
+Streams a ZIP archive for completed file artifacts.
+
+Request:
+
+```json
+{
+  "fileIds": ["uuid-1", "uuid-2"]
+}
+```
+
+Status codes:
+
+- `200` ZIP stream
+- `400 empty_list`
+- `400 duplicate_file_id`
+- `404 not_found`
+- `409 file_deleted`
+- `409 not_ready`
+- `500 artifact_missing`
+
 ### `GET /v1/files/:fileId/logs`
 
 Returns the per-download plain-text log.
@@ -569,6 +591,27 @@ Status codes:
 - `404` row does not exist
 
 Range requests are not supported. The server ignores `Range` and returns the full body.
+
+### `POST /v1/nzb/archive`
+
+Streams a ZIP archive for completed NZB artifacts.
+
+Request:
+
+```json
+{
+  "nzbIds": ["uuid-1", "uuid-2"]
+}
+```
+
+Status codes:
+
+- `200` ZIP stream
+- `400 empty_list`
+- `400 duplicate_nzb_id`
+- `404 not_found`
+- `409 not_ready`
+- `500 artifact_missing`
 
 ### `GET /v1/nzb/:nzbId/logs`
 

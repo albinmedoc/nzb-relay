@@ -57,6 +57,20 @@ export const createNzbRequestSchema = z
   .passthrough();
 export type CreateNzbRequest = z.infer<typeof createNzbRequestSchema>;
 
+export const createFileArchiveRequestSchema = z
+  .object({
+    fileIds: z.array(z.string().trim().min(1)).min(1)
+  })
+  .passthrough();
+export type CreateFileArchiveRequest = z.infer<typeof createFileArchiveRequestSchema>;
+
+export const createNzbArchiveRequestSchema = z
+  .object({
+    nzbIds: z.array(z.string().trim().min(1)).min(1)
+  })
+  .passthrough();
+export type CreateNzbArchiveRequest = z.infer<typeof createNzbArchiveRequestSchema>;
+
 export interface ListResponse<T> {
   items: T[];
   total: number;

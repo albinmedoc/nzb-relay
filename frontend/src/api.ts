@@ -113,6 +113,30 @@ export async function readText(path: string): Promise<string> {
 export async function downloadArtifact(path: string, filename: string): Promise<void> {
   const response = await request(path);
   await ensureOk(response);
+  await downloadResponse(response, filename);
+}
+
+export async function downloadFileArchive(fileIds: string[]): Promise<void> {
+  const response = await request('/files/archive', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fileIds })
+  });
+  await ensureOk(response);
+  await downloadResponse(response, 'nzb-relay-files.zip');
+}
+
+export async function downloadNzbArchive(nzbIds: string[]): Promise<void> {
+  const response = await request('/nzb/archive', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nzbIds })
+  });
+  await ensureOk(response);
+  await downloadResponse(response, 'nzb-relay-nzbs.zip');
+}
+
+async function downloadResponse(response: Response, filename: string): Promise<void> {
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
