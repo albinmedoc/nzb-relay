@@ -1,22 +1,58 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { deleteWatchlistSource, getWatchlistSource, retryWatchlistSource, updateWatchlistSource } from '../api';
+import {
+  deleteFile,
+  deleteNzb,
+  deleteWatchlistSource,
+  downloadArtifact,
+  getWatchlistSource,
+  listFiles,
+  listNzbs,
+  readText,
+  retryFile,
+  retryNzb,
+  retryWatchlistSource,
+  updateWatchlistSource
+} from '../api';
 import DataTable from '../components/DataTable.vue';
 import PaginationControls from '../components/PaginationControls.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import TableToolbar from '../components/TableToolbar.vue';
 import { usePagination } from '../composables/usePagination';
+import { openLog } from '../state/log';
 import { clearMessages, runAction, setError, setNotice } from '../state/messages';
-import type { WatchlistEpisodeStatus, WatchlistSourceDetail } from '../types';
-import { formatDate } from '../utils/format';
+import type { FileJob, JobStatus, NzbJob, WatchlistEpisodeStatus, WatchlistSourceDetail } from '../types';
+import { formatDate, nzbDownloadName } from '../utils/format';
 
 const route = useRoute();
 const router = useRouter();
 const loading = ref(false);
+const jobsLoading = ref(false);
 const source = ref<WatchlistSourceDetail | null>(null);
+const files = ref<FileJob[]>([]);
+const nzbs = ref<NzbJob[]>([]);
+const filesTotal = ref(0);
+const nzbsTotal = ref(0);
+const activeTab = ref<'episodes' | 'files' | 'nzbs'>('episodes');
 const { limit, offset, reset, setLimit, setOffset } = usePagination();
+const {
+  limit: fileLimit,
+  offset: fileOffset,
+  reset: resetFiles,
+  setLimit: setFileLimit,
+  setOffset: setFileOffset
+} = usePagination();
+const {
+  limit: nzbLimit,
+  offset: nzbOffset,
+  reset: resetNzbs,
+  setLimit: setNzbLimit,
+  setOffset: setNzbOffset
+} = usePagination();
 const status = ref<'all' | WatchlistEpisodeStatus>('all');
+const fileStatus = ref<'all' | JobStatus>('all');
+const nzbStatus = ref<'all' | JobStatus>('all');
 const season = ref<'all' | string>('all');
 const query = ref('');
 
@@ -32,6 +68,7 @@ const statusOptions: Array<'all' | WatchlistEpisodeStatus> = [
   'posted',
   'blocked'
 ];
+const jobStatusOptions: Array<'all' | JobStatus> = ['all', 'pending', 'running', 'completed', 'failed'];
 
 const episodes = computed(() => source.value?.episodes ?? []);
 const seasonOptions = computed(() =>
@@ -56,6 +93,20 @@ const filteredEpisodes = computed(() => {
 const visibleEpisodes = computed(() => filteredEpisodes.value.slice(offset.value, offset.value + limit.value));
 
 watch([status, season, query], reset);
+watch([fileLimit, fileOffset], () => {
+  void loadFiles(false);
+});
+watch([nzbLimit, nzbOffset], () => {
+  void loadNzbs(false);
+});
+watch(fileStatus, () => {
+  resetFiles();
+  void loadFiles(false);
+});
+watch(nzbStatus, () => {
+  resetNzbs();
+  void loadNzbs(false);
+});
 
 async function load(reportErrors = true) {
   loading.value = true;
@@ -64,6 +115,7 @@ async function load(reportErrors = true) {
   }
   try {
     source.value = await getWatchlistSource(String(route.params.sourceId));
+    await Promise.all([loadFiles(false), loadNzbs(false)]);
   } catch (cause) {
     if (reportErrors) {
       setError(cause);
@@ -72,6 +124,57 @@ async function load(reportErrors = true) {
     }
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadFiles(reportErrors = true) {
+  if (!source.value) {
+    return;
+  }
+  jobsLoading.value = true;
+  try {
+    const response = await listFiles({
+      watchlistSourceId: source.value.id,
+      includeDeleted: true,
+      limit: fileLimit.value,
+      offset: fileOffset.value,
+      status: fileStatus.value === 'all' ? undefined : fileStatus.value
+    });
+    files.value = response.items;
+    filesTotal.value = response.total;
+  } catch (cause) {
+    if (reportErrors) {
+      setError(cause);
+    } else {
+      throw cause;
+    }
+  } finally {
+    jobsLoading.value = false;
+  }
+}
+
+async function loadNzbs(reportErrors = true) {
+  if (!source.value) {
+    return;
+  }
+  jobsLoading.value = true;
+  try {
+    const response = await listNzbs({
+      watchlistSourceId: source.value.id,
+      limit: nzbLimit.value,
+      offset: nzbOffset.value,
+      status: nzbStatus.value === 'all' ? undefined : nzbStatus.value
+    });
+    nzbs.value = response.items;
+    nzbsTotal.value = response.total;
+  } catch (cause) {
+    if (reportErrors) {
+      setError(cause);
+    } else {
+      throw cause;
+    }
+  } finally {
+    jobsLoading.value = false;
   }
 }
 
@@ -117,6 +220,56 @@ function clearFilters() {
   reset();
 }
 
+async function showFileLog(file: FileJob) {
+  await runAction(async () => {
+    openLog(file.filename, await readText(`/files/${file.id}/logs`));
+  });
+}
+
+async function retryDownload(file: FileJob) {
+  await runAction(async () => {
+    await retryFile(file.id);
+    await load(false);
+    setNotice('Download queued for retry.');
+  });
+}
+
+async function removeFile(file: FileJob) {
+  if (!confirm(`Delete ${file.filename}?`)) {
+    return;
+  }
+  await runAction(async () => {
+    await deleteFile(file.id);
+    await load(false);
+    setNotice('Download deleted.');
+  });
+}
+
+async function showNzbLog(nzb: NzbJob) {
+  await runAction(async () => {
+    openLog(nzb.nzbFile || nzb.id, await readText(`/nzb/${nzb.id}/logs`));
+  });
+}
+
+async function retryNzbJob(nzb: NzbJob) {
+  await runAction(async () => {
+    await retryNzb(nzb.id);
+    await load(false);
+    setNotice('NZB queued for retry.');
+  });
+}
+
+async function removeNzb(nzb: NzbJob) {
+  if (!confirm(`Delete NZB job ${nzb.nzbFile || nzb.id}?`)) {
+    return;
+  }
+  await runAction(async () => {
+    await deleteNzb(nzb.id);
+    await load(false);
+    setNotice('NZB job deleted.');
+  });
+}
+
 onMounted(load);
 </script>
 
@@ -158,11 +311,44 @@ onMounted(load);
 
   <section class="panel">
     <div class="section-head">
-      <h2>Episodes</h2>
-      <span class="muted">{{ filteredEpisodes.length }} episodes</span>
+      <div class="tabs" role="tablist" aria-label="Watchlist detail views">
+        <button
+          class="secondary"
+          type="button"
+          :class="{ active: activeTab === 'episodes' }"
+          role="tab"
+          :aria-selected="activeTab === 'episodes'"
+          @click="activeTab = 'episodes'"
+        >
+          Episodes
+        </button>
+        <button
+          class="secondary"
+          type="button"
+          :class="{ active: activeTab === 'files' }"
+          role="tab"
+          :aria-selected="activeTab === 'files'"
+          @click="activeTab = 'files'"
+        >
+          Files
+        </button>
+        <button
+          class="secondary"
+          type="button"
+          :class="{ active: activeTab === 'nzbs' }"
+          role="tab"
+          :aria-selected="activeTab === 'nzbs'"
+          @click="activeTab = 'nzbs'"
+        >
+          NZBs
+        </button>
+      </div>
+      <span v-if="activeTab === 'episodes'" class="muted">{{ filteredEpisodes.length }} episodes</span>
+      <span v-if="activeTab === 'files'" class="muted">{{ filesTotal }} files</span>
+      <span v-if="activeTab === 'nzbs'" class="muted">{{ nzbsTotal }} NZBs</span>
     </div>
 
-    <TableToolbar>
+    <TableToolbar v-if="activeTab === 'episodes'">
       <label>
         Status
         <select v-model="status">
@@ -186,7 +372,7 @@ onMounted(load);
       </template>
     </TableToolbar>
 
-    <DataTable :rows="visibleEpisodes" :loading="loading" empty-message="No watchlist episodes.">
+    <DataTable v-if="activeTab === 'episodes'" :rows="visibleEpisodes" :loading="loading" empty-message="No watchlist episodes.">
       <template #header>
         <th>Episode</th>
         <th>Status</th>
@@ -215,12 +401,132 @@ onMounted(load);
     </DataTable>
 
     <PaginationControls
+      v-if="activeTab === 'episodes'"
       :total="filteredEpisodes.length"
       :limit="limit"
       :offset="offset"
       :disabled="loading"
       @update:limit="setLimit"
       @update:offset="setOffset"
+    />
+
+    <TableToolbar v-if="activeTab === 'files'">
+      <label>
+        Status
+        <select v-model="fileStatus">
+          <option v-for="option in jobStatusOptions" :key="option" :value="option">{{ option }}</option>
+        </select>
+      </label>
+      <template #actions>
+        <button class="secondary" type="button" :disabled="loading || jobsLoading" @click="() => loadFiles()">Refresh</button>
+      </template>
+    </TableToolbar>
+
+    <DataTable v-if="activeTab === 'files'" :rows="files" :loading="loading || jobsLoading" empty-message="No watchlist files.">
+      <template #header>
+        <th>File</th>
+        <th>Status</th>
+        <th>Created</th>
+        <th>Completed</th>
+        <th>Actions</th>
+      </template>
+      <template #row="{ row: file }">
+        <td>
+          <strong>{{ file.filename }}</strong>
+          <span class="subtext">{{ file.url }}</span>
+        </td>
+        <td>
+          <StatusBadge :status="file.status" />
+          <span v-if="file.deleted" class="subtext">deleted</span>
+          <span v-if="file.error" class="subtext">{{ file.error }}</span>
+        </td>
+        <td>{{ formatDate(file.createdAt) }}</td>
+        <td>{{ formatDate(file.downloadedAt) }}</td>
+        <td class="actions">
+          <button class="secondary" type="button" @click="showFileLog(file)">Log</button>
+          <button
+            class="secondary"
+            type="button"
+            :disabled="file.status !== 'completed' || file.deleted"
+            @click="downloadArtifact(`/files/${file.id}/download`, file.filename)"
+          >
+            Download
+          </button>
+          <button class="secondary" type="button" :disabled="file.status !== 'failed' || file.deleted" @click="retryDownload(file)">
+            Retry
+          </button>
+          <button class="danger" type="button" @click="removeFile(file)">Delete</button>
+        </td>
+      </template>
+    </DataTable>
+
+    <PaginationControls
+      v-if="activeTab === 'files'"
+      :total="filesTotal"
+      :limit="fileLimit"
+      :offset="fileOffset"
+      :disabled="loading || jobsLoading"
+      @update:limit="setFileLimit"
+      @update:offset="setFileOffset"
+    />
+
+    <TableToolbar v-if="activeTab === 'nzbs'">
+      <label>
+        Status
+        <select v-model="nzbStatus">
+          <option v-for="option in jobStatusOptions" :key="option" :value="option">{{ option }}</option>
+        </select>
+      </label>
+      <template #actions>
+        <button class="secondary" type="button" :disabled="loading || jobsLoading" @click="() => loadNzbs()">Refresh</button>
+      </template>
+    </TableToolbar>
+
+    <DataTable v-if="activeTab === 'nzbs'" :rows="nzbs" :loading="loading || jobsLoading" empty-message="No watchlist NZBs.">
+      <template #header>
+        <th>NZB</th>
+        <th>Status</th>
+        <th>Files</th>
+        <th>Created</th>
+        <th>Posted</th>
+        <th>Actions</th>
+      </template>
+      <template #row="{ row: nzb }">
+        <td>
+          <strong>{{ nzb.nzbFile || nzb.id }}</strong>
+          <span class="subtext">{{ nzb.id }}</span>
+        </td>
+        <td>
+          <StatusBadge :status="nzb.status" />
+          <span v-if="nzb.error" class="subtext">{{ nzb.error }}</span>
+        </td>
+        <td>{{ nzb.files.length }}</td>
+        <td>{{ formatDate(nzb.createdAt) }}</td>
+        <td>{{ formatDate(nzb.postedAt) }}</td>
+        <td class="actions">
+          <button class="secondary" type="button" @click="showNzbLog(nzb)">Log</button>
+          <button
+            class="secondary"
+            type="button"
+            :disabled="nzb.status !== 'completed'"
+            @click="downloadArtifact(`/nzb/${nzb.id}/download`, nzbDownloadName(nzb))"
+          >
+            Download
+          </button>
+          <button class="secondary" type="button" :disabled="nzb.status !== 'failed'" @click="retryNzbJob(nzb)">Retry</button>
+          <button class="danger" type="button" @click="removeNzb(nzb)">Delete</button>
+        </td>
+      </template>
+    </DataTable>
+
+    <PaginationControls
+      v-if="activeTab === 'nzbs'"
+      :total="nzbsTotal"
+      :limit="nzbLimit"
+      :offset="nzbOffset"
+      :disabled="loading || jobsLoading"
+      @update:limit="setNzbLimit"
+      @update:offset="setNzbOffset"
     />
   </section>
 </template>

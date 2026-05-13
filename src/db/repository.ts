@@ -25,6 +25,8 @@ export interface JobListFilters {
   status?: JobStatus;
   createdAfter?: string;
   createdBefore?: string;
+  watchlistSourceId?: string;
+  includeDeleted?: boolean;
 }
 
 export function insertFile(db: AppDatabase, input: CreateFileInput): FileRow {
@@ -77,19 +79,29 @@ export function listFiles(
   offset: number,
   filters: JobListFilters = {}
 ): { items: FileRow[]; total: number } {
-  const { where, params } = buildJobListWhere(filters, ['deleted = 0']);
+  const join = filters.watchlistSourceId ? 'JOIN watchlist_episode we ON we.fileId = file.id' : '';
+  const baseClauses = filters.includeDeleted ? [] : ['file.deleted = 0'];
+  const baseParams: Array<string | number> = [];
+  if (filters.watchlistSourceId) {
+    baseClauses.push('we.sourceId = ?');
+    baseParams.push(filters.watchlistSourceId);
+  }
+  const { where, params } = buildJobListWhere(filters, baseClauses, baseParams, 'file');
   const items = db
     .prepare(
       `
-        SELECT *
+        SELECT DISTINCT file.*
         FROM file
+        ${join}
         ${where}
-        ORDER BY createdAt DESC
+        ORDER BY file.createdAt DESC
         LIMIT ? OFFSET ?
       `
     )
     .all(...params, limit, offset) as FileRow[];
-  const total = (db.prepare(`SELECT COUNT(*) AS total FROM file ${where}`).get(...params) as { total: number }).total;
+  const total = (
+    db.prepare(`SELECT COUNT(DISTINCT file.id) AS total FROM file ${join} ${where}`).get(...params) as { total: number }
+  ).total;
   return { items, total };
 }
 
@@ -288,39 +300,52 @@ export function listNzbs(
   offset: number,
   filters: JobListFilters = {}
 ): { items: NzbRow[]; total: number } {
-  const { where, params } = buildJobListWhere(filters);
+  const join = filters.watchlistSourceId ? 'JOIN watchlist_episode we ON we.nzbId = nzb.id' : '';
+  const baseClauses: string[] = [];
+  const baseParams: Array<string | number> = [];
+  if (filters.watchlistSourceId) {
+    baseClauses.push('we.sourceId = ?');
+    baseParams.push(filters.watchlistSourceId);
+  }
+  const { where, params } = buildJobListWhere(filters, baseClauses, baseParams, 'nzb');
   const items = db
     .prepare(
       `
-        SELECT *
+        SELECT DISTINCT nzb.*
         FROM nzb
+        ${join}
         ${where}
-        ORDER BY createdAt DESC
+        ORDER BY nzb.createdAt DESC
         LIMIT ? OFFSET ?
       `
     )
     .all(...params, limit, offset) as NzbRow[];
-  const total = (db.prepare(`SELECT COUNT(*) AS total FROM nzb ${where}`).get(...params) as { total: number }).total;
+  const total = (
+    db.prepare(`SELECT COUNT(DISTINCT nzb.id) AS total FROM nzb ${join} ${where}`).get(...params) as { total: number }
+  ).total;
   return { items, total };
 }
 
 function buildJobListWhere(
   filters: JobListFilters,
-  baseClauses: string[] = []
+  baseClauses: string[] = [],
+  baseParams: Array<string | number> = [],
+  tableName = ''
 ): { where: string; params: Array<string | number> } {
   const clauses = [...baseClauses];
-  const params: Array<string | number> = [];
+  const params: Array<string | number> = [...baseParams];
+  const column = (name: string) => (tableName ? `${tableName}.${name}` : name);
 
   if (filters.status) {
-    clauses.push('status = ?');
+    clauses.push(`${column('status')} = ?`);
     params.push(filters.status);
   }
   if (filters.createdAfter) {
-    clauses.push('createdAt >= ?');
+    clauses.push(`${column('createdAt')} >= ?`);
     params.push(filters.createdAfter);
   }
   if (filters.createdBefore) {
-    clauses.push('createdAt <= ?');
+    clauses.push(`${column('createdAt')} <= ?`);
     params.push(filters.createdBefore);
   }
 

@@ -1,5 +1,6 @@
 export type {
   CreateWatchlistSourceRequest,
+  FileListParams,
   FileJobResponse as FileJob,
   HealthResponse as Health,
   JobListParams,

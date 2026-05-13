@@ -787,6 +787,8 @@ function parseListParams(c: Context):
   const status = c.req.query('status');
   const createdAfter = c.req.query('createdAfter');
   const createdBefore = c.req.query('createdBefore');
+  const watchlistSourceId = c.req.query('watchlistSourceId');
+  const includeDeleted = c.req.query('includeDeleted');
   const filters: JobListFilters = {};
 
   if (status != null) {
@@ -815,6 +817,22 @@ function parseListParams(c: Context):
 
   if (filters.createdAfter && filters.createdBefore && filters.createdAfter > filters.createdBefore) {
     return { ok: false, code: 'invalid_created_range', error: 'createdAfter must be before or equal to createdBefore' };
+  }
+
+  if (watchlistSourceId != null) {
+    const sourceId = z.string().trim().min(1).safeParse(watchlistSourceId);
+    if (!sourceId.success) {
+      return { ok: false, code: 'invalid_watchlist_source_id', error: 'watchlistSourceId must be a non-empty string' };
+    }
+    filters.watchlistSourceId = sourceId.data;
+  }
+
+  if (includeDeleted != null) {
+    const value = includeDeleted.toLowerCase();
+    if (value !== 'true' && value !== 'false') {
+      return { ok: false, code: 'invalid_include_deleted', error: 'includeDeleted must be true or false' };
+    }
+    filters.includeDeleted = value === 'true';
   }
 
   return { ok: true, value: { limit, offset, filters } };

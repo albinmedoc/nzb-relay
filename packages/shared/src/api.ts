@@ -73,6 +73,11 @@ export interface JobListParams extends ListParams {
   status?: JobStatus;
   createdAfter?: string;
   createdBefore?: string;
+  watchlistSourceId?: string;
+}
+
+export interface FileListParams extends JobListParams {
+  includeDeleted?: boolean;
 }
 
 export interface ApiErrorResponse {

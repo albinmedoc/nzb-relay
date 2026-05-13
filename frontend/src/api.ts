@@ -1,6 +1,7 @@
 import { apiBase, backendToken } from './runtime';
 import type {
   CreateWatchlistSourceRequest,
+  FileListParams,
   FileJob,
   Health,
   JobListParams,
@@ -79,7 +80,7 @@ export async function deleteWatchlistSource(sourceId: string): Promise<void> {
   await ensureOk(await request(`/watchlist/${sourceId}`, { method: 'DELETE' }));
 }
 
-export function listFiles(params: JobListParams = {}): Promise<ListResponse<FileJob>> {
+export function listFiles(params: FileListParams = {}): Promise<ListResponse<FileJob>> {
   return requestJson<ListResponse<FileJob>>(`/files${toQuery({ limit: 20, ...params })}`);
 }
 

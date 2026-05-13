@@ -156,11 +156,6 @@ Query parameters:
 
 - `limit`, default `20`, max `100`
 - `offset`, default `0`
-- `status`, one of `pending`, `running`, `completed`, `failed`
-- `createdAfter`, valid datetime, inclusive `createdAt >= createdAfter`
-- `createdBefore`, valid datetime, inclusive `createdAt <= createdBefore`
-
-Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
 
 Response:
 
@@ -344,8 +339,10 @@ Query parameters:
 - `status`, one of `pending`, `running`, `completed`, `failed`
 - `createdAfter`, valid datetime, inclusive `createdAt >= createdAfter`
 - `createdBefore`, valid datetime, inclusive `createdAt <= createdBefore`
+- `watchlistSourceId`, filters to files linked from episodes under the watchlist source
+- `includeDeleted`, `true` or `false`, default `false`; useful with `watchlistSourceId` because posted watchlist files can be soft-deleted
 
-Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, or `invalid_created_range`.
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, `invalid_created_range`, `invalid_watchlist_source_id`, or `invalid_include_deleted`.
 
 Response:
 
@@ -507,6 +504,12 @@ Query parameters:
 
 - `limit`, default `20`, max `100`
 - `offset`, default `0`
+- `status`, one of `pending`, `running`, `completed`, `failed`
+- `createdAfter`, valid datetime, inclusive `createdAt >= createdAfter`
+- `createdBefore`, valid datetime, inclusive `createdAt <= createdBefore`
+- `watchlistSourceId`, filters to NZBs linked from episodes under the watchlist source
+
+Invalid filters return `400` with `invalid_status`, `invalid_created_after`, `invalid_created_before`, `invalid_created_range`, or `invalid_watchlist_source_id`.
 
 Response:
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
 import { getFile, getNzb, insertFile, insertNzb } from '../src/db/repository.js';
+import { insertWatchlistSource, upsertWatchlistEpisode } from '../src/db/watchlist-repository.js';
 import { requestLoggingMiddleware } from '../src/http/middleware.js';
 import { nzbLogPath } from '../src/utils/paths.js';
 import { cleanup, createTempDataDir, createTestApp, createTestDb, testConfig } from './helpers.js';
@@ -192,6 +193,39 @@ describe('http api', () => {
     expect(await invalidRange.json()).toMatchObject({ code: 'invalid_created_range' });
   });
 
+  it('filters files by watchlist source and can include soft-deleted rows', async () => {
+    const source = createWatchlistSource();
+    const otherSource = createWatchlistSource('https://example.test/other-source');
+    const linked = createFile('https://example.test/source-file');
+    const deleted = createFile('https://example.test/deleted-source-file');
+    const other = createFile('https://example.test/other-source-file');
+    db.prepare('UPDATE file SET deleted = 1 WHERE id = ?').run(deleted.id);
+    linkWatchlistFile(source.id, linked.id, 'https://example.test/source-file');
+    linkWatchlistFile(source.id, deleted.id, 'https://example.test/deleted-source-file');
+    linkWatchlistFile(otherSource.id, other.id, 'https://example.test/other-source-file');
+
+    const defaultResponse = await app.request(`/v1/files?watchlistSourceId=${source.id}`, {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(defaultResponse.status).toBe(200);
+    expect(await defaultResponse.json()).toMatchObject({
+      total: 1,
+      items: [{ id: linked.id }]
+    });
+
+    const includeDeletedResponse = await app.request(`/v1/files?watchlistSourceId=${source.id}&includeDeleted=true`, {
+      headers: { authorization: 'Bearer secret' }
+    });
+    expect(includeDeletedResponse.status).toBe(200);
+    expect(await includeDeletedResponse.json()).toMatchObject({
+      total: 2,
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: linked.id, deleted: false }),
+        expect.objectContaining({ id: deleted.id, deleted: true })
+      ])
+    });
+  });
+
   it('filters NZBs by status and inclusive createdAt bounds', async () => {
     const file = createFile('https://example.test/nzb-source');
     db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
@@ -245,6 +279,32 @@ describe('http api', () => {
     });
     expect(invalidDate.status).toBe(400);
     expect(await invalidDate.json()).toMatchObject({ code: 'invalid_created_before' });
+  });
+
+  it('filters NZBs by watchlist source', async () => {
+    const source = createWatchlistSource();
+    const otherSource = createWatchlistSource('https://example.test/other-nzb-source');
+    const linkedFile = createFile('https://example.test/source-nzb-file');
+    const otherFile = createFile('https://example.test/other-nzb-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id IN (?, ?)").run(
+      '2026-05-06T00:00:00.000Z',
+      linkedFile.id,
+      otherFile.id
+    );
+    const linkedNzb = insertNzb(db, { releaseName: 'Source.Nzb', fileIds: [linkedFile.id] });
+    const otherNzb = insertNzb(db, { releaseName: 'Other.Nzb', fileIds: [otherFile.id] });
+    linkWatchlistNzb(source.id, linkedFile.id, linkedNzb.id, 'https://example.test/source-nzb-file');
+    linkWatchlistNzb(otherSource.id, otherFile.id, otherNzb.id, 'https://example.test/other-nzb-file');
+
+    const response = await app.request(`/v1/nzb?watchlistSourceId=${source.id}`, {
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      total: 1,
+      items: [{ id: linkedNzb.id, files: [{ id: linkedFile.id }] }]
+    });
   });
 
   it('uses the JSON error envelope for unknown routes', async () => {
@@ -587,4 +647,39 @@ function createFile(url: string) {
     season: null,
     episode: null
   });
+}
+
+function createWatchlistSource(url = 'https://example.test/source') {
+  return insertWatchlistSource(db, {
+    service: 'svtplay',
+    type: 'series',
+    url,
+    backfill: true
+  });
+}
+
+function linkWatchlistFile(sourceId: string, fileId: string, url: string) {
+  const { row } = upsertWatchlistEpisode(db, {
+    sourceId,
+    url,
+    season: 1,
+    episode: 1,
+    title: 'Episode 1',
+    quality: '1080',
+    status: 'download_queued'
+  });
+  db.prepare('UPDATE watchlist_episode SET fileId = ? WHERE id = ?').run(fileId, row.id);
+}
+
+function linkWatchlistNzb(sourceId: string, fileId: string, nzbId: string, url: string) {
+  const { row } = upsertWatchlistEpisode(db, {
+    sourceId,
+    url,
+    season: 1,
+    episode: 1,
+    title: 'Episode 1',
+    quality: '1080',
+    status: 'nzb_queued'
+  });
+  db.prepare('UPDATE watchlist_episode SET fileId = ?, nzbId = ? WHERE id = ?').run(fileId, nzbId, row.id);
 }
