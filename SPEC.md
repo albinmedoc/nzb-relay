@@ -144,7 +144,7 @@ Body (`Content-Type: application/json`):
 Filename selection:
 - `season` and `episode` both provided → `TEMPLATE_EPISODE` (default `{title}.s{season}e{episode}.{service}.{ext}`).
 - Otherwise → `TEMPLATE_MOVIE` (default `{title}.{service}.{ext}`).
-- Substitutions are sanitized: spaces → `.`, characters outside `[A-Za-z0-9._-]` stripped, season/episode zero-padded to two digits.
+- Substitutions are sanitized: spaces → `.`, characters outside `[A-Za-z0-9._-]` stripped, season/episode zero-padded to two digits. Codec substitutions render empty for the initial working filename and are applied after the completed MKV is probed.
 
 Filenames do not need to be globally unique: each download lives in its own per-`fileId` directory (`/data/downloads/<fileId>/<filename>.mkv`), so two downloads that happen to resolve to the same filename do not collide on disk.
 
@@ -576,7 +576,7 @@ These templates are used both for on-disk filenames and for NZB release names. S
 | `TEMPLATE_MOVIE`       | `{title}.{service}.{ext}`                     | Movie filename + single-movie NZB release name     |
 | `TEMPLATE_SEASON_PACK` | `{title}.s{season}.{service}.{ext}`           | Multi-file NZB release name (season packs)         |
 
-Substitutions: `{title}`, `{service}`, `{quality}`, `{season}` (zero-padded to 2), `{episode}` (zero-padded to 2), `{ext}` (always `mkv`).
+Substitutions: `{title}`, `{service}`, `{quality}`, `{videoCodec}`, `{audioCodec}`, `{season}` (zero-padded to 2), `{episode}` (zero-padded to 2), `{ext}` (always `mkv`). Codec substitutions are filled after the completed MKV is probed with `ffprobe`; `hevc` is normalized to `h265`, and `avc1` is normalized to `h264`.
 
 ### 7.3 Usenet
 

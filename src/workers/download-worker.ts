@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
 import { fetch } from 'undici';
 import type { Config } from '../config.js';
@@ -11,11 +11,13 @@ import {
   getFileOrThrow,
   nextPendingFile,
   transitionFileCompleted,
-  transitionFileFailed
+  transitionFileFailed,
+  updateRunningFileFilename
 } from '../db/repository.js';
 import { childFailureSummary, isEnospc, runLoggedProcess } from '../utils/child.js';
 import { removeDownloadPartialsKeepLog } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, downloadDir, stripMkv } from '../utils/paths.js';
+import { renderDownloadFilename } from '../utils/templates.js';
 import { sleep } from '../utils/time.js';
 import type { ChildProcessResult, ErrorCode, FileRow } from '../types.js';
 
@@ -107,6 +109,7 @@ export class DownloadWorker {
     await fsp.mkdir(downloadDir(this.config, row.id), { recursive: true });
     const logPath = fileLogPath(this.config, row);
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    let finalRow = row;
 
     try {
       await removeDownloadPartialsKeepLog(this.config, row);
@@ -119,8 +122,9 @@ export class DownloadWorker {
           logStream.write(`download sidecar cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`);
           this.logger.warn({ event: 'download.sidecar_cleanup_failed', fileId: row.id, error }, 'download sidecar cleanup failed');
         });
-        logStream.write(`completed ${row.filename}\n`);
-        transitionFileCompleted(this.db, this.config, row);
+        finalRow = await this.applyCodecTemplate(row, logStream, controller);
+        logStream.write(`completed ${finalRow.filename}\n`);
+        transitionFileCompleted(this.db, this.config, finalRow);
         return;
       }
 
@@ -152,6 +156,11 @@ export class DownloadWorker {
       }
     } finally {
       await new Promise<void>((resolve) => logStream.end(resolve));
+      if (finalRow.filename !== row.filename) {
+        await renameDownloadLog(this.config, row, finalRow).catch((error) => {
+          this.logger.warn({ event: 'download.log_rename_failed', fileId: row.id, error }, 'download log rename failed');
+        });
+      }
     }
   }
 
@@ -205,12 +214,182 @@ export class DownloadWorker {
     await fsp.rename(tempPath, fileMediaPath(this.config, row));
     logStream.write(`muxed download artifacts into ${row.filename}\n`);
   }
+
+  private async applyCodecTemplate(
+    row: FileRow,
+    logStream: Pick<fs.WriteStream, 'write'>,
+    controller: AbortController
+  ): Promise<FileRow> {
+    if (!downloadTemplateIncludesCodecs(this.config, row)) {
+      return row;
+    }
+
+    let codecs: MediaCodecs;
+    try {
+      codecs = await probeMediaCodecs(fileMediaPath(this.config, row), controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new DownloadPipelineError('child_exit_nonzero', 'codec probe cancelled');
+      }
+      logStream.write(`codec probe failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      this.logger.warn({ event: 'download.codec_probe_failed', fileId: row.id, error }, 'download codec probe failed');
+      return row;
+    }
+
+    const filename = renderDownloadFilename(this.config, {
+      ...row,
+      videoCodec: codecs.videoCodec,
+      audioCodec: codecs.audioCodec
+    });
+    if (filename === row.filename) {
+      return row;
+    }
+
+    const currentPath = fileMediaPath(this.config, row);
+    const nextRow = { ...row, filename };
+    const nextPath = fileMediaPath(this.config, nextRow);
+    await fsp.rename(currentPath, nextPath);
+
+    const updated = updateRunningFileFilename(this.db, row.id, filename);
+    if (!updated) {
+      await fsp.rename(nextPath, currentPath).catch(() => undefined);
+      throw new Error(`failed to update filename for running file: ${row.id}`);
+    }
+
+    logStream.write(`renamed media with codecs: ${row.filename} -> ${filename}\n`);
+    return updated;
+  }
 }
 
 class DownloadPipelineError extends Error {
   constructor(readonly code: ErrorCode, message: string) {
     super(message);
   }
+}
+
+interface MediaCodecs {
+  videoCodec: string;
+  audioCodec: string;
+}
+
+interface FfprobeStream {
+  codec_type?: unknown;
+  codec_name?: unknown;
+}
+
+interface FfprobeOutput {
+  streams?: FfprobeStream[];
+}
+
+function downloadTemplateIncludesCodecs(config: Config, row: Pick<FileRow, 'season' | 'episode'>): boolean {
+  const template = row.season != null && row.episode != null ? config.templates.episode : config.templates.movie;
+  return /\{(?:videoCodec|audioCodec)\}/.test(template);
+}
+
+export function normalizeCodecName(codecName: string): string {
+  const normalized = codecName.trim().toLowerCase();
+  if (normalized === 'hevc' || normalized === 'h265') {
+    return 'h265';
+  }
+  if (normalized === 'avc1' || normalized === 'h264') {
+    return 'h264';
+  }
+  return normalized;
+}
+
+export function parseFfprobeCodecs(output: string): MediaCodecs {
+  const parsed = JSON.parse(output) as FfprobeOutput;
+  const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+  const video = streams.find((stream) => stream.codec_type === 'video' && typeof stream.codec_name === 'string');
+  const audio = streams.find((stream) => stream.codec_type === 'audio' && typeof stream.codec_name === 'string');
+  return {
+    videoCodec: typeof video?.codec_name === 'string' ? normalizeCodecName(video.codec_name) : '',
+    audioCodec: typeof audio?.codec_name === 'string' ? normalizeCodecName(audio.codec_name) : ''
+  };
+}
+
+export function probeMediaCodecs(filePath: string, signal?: AbortSignal): Promise<MediaCodecs> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffprobe', [
+      '-v',
+      'error',
+      '-show_entries',
+      'stream=codec_type,codec_name',
+      '-of',
+      'json',
+      filePath
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let killTimer: NodeJS.Timeout | null = null;
+
+    const terminate = () => {
+      if (!child.killed) {
+        child.kill('SIGTERM');
+        killTimer = setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL');
+          }
+        }, 1000);
+      }
+    };
+
+    const settle = (error: Error | null, codecs?: MediaCodecs) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      signal?.removeEventListener('abort', terminate);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(codecs ?? { videoCodec: '', audioCodec: '' });
+    };
+
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', (error) => {
+      settle(error);
+    });
+    child.on('close', (code, signalName) => {
+      if (code !== 0) {
+        settle(new Error(`ffprobe exited with code ${code ?? 'unknown'}${signalName ? ` by signal ${signalName}` : ''}: ${stderr.trim() || 'no output'}`));
+        return;
+      }
+      try {
+        settle(null, parseFfprobeCodecs(stdout));
+      } catch (error) {
+        settle(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+    if (signal?.aborted) {
+      terminate();
+    } else {
+      signal?.addEventListener('abort', terminate, { once: true });
+    }
+  });
+}
+
+async function renameDownloadLog(config: Config, from: Pick<FileRow, 'id' | 'filename'>, to: Pick<FileRow, 'id' | 'filename'>): Promise<void> {
+  const fromPath = fileLogPath(config, from);
+  const toPath = fileLogPath(config, to);
+  if (fromPath === toPath) {
+    return;
+  }
+  await fsp.mkdir(path.dirname(toPath), { recursive: true });
+  await fsp.rename(fromPath, toPath);
 }
 
 export function buildSvtplayDownloadArgs(

@@ -80,9 +80,13 @@ Supported substitutions:
 | `{title}` | Request or watchlist title after sanitization. |
 | `{service}` | Source service, for example `svtplay`, after sanitization. |
 | `{quality}` | Requested or discovered quality after sanitization. May be empty. |
+| `{videoCodec}` | First video stream codec from the completed MKV, for example `h264`, `h265`, `av1`, or `vp9`. May be empty before completion or if probing fails. |
+| `{audioCodec}` | First audio stream codec from the completed MKV, for example `aac`, `ac3`, `eac3`, or `opus`. May be empty before completion or if probing fails. |
 | `{season}` | Season number padded to two digits when present. |
 | `{episode}` | Episode number padded to two digits when present. |
 | `{ext}` | File extension. Defaults to `mkv`. |
+
+Codec substitutions are applied after the download has been muxed with `ffmpeg`. The worker first downloads using the template with empty codec values, then runs `ffprobe`, renames the completed media/log files, and stores the final filename. `hevc` is normalized to `h265`, and `avc1` is normalized to `h264`.
 
 If a rendered template becomes empty after sanitization, the fallback is `release.<ext>`.
 

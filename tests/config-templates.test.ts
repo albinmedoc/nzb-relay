@@ -121,4 +121,22 @@ describe('config and templates', () => {
       })
     ).toBe('Show.Name.s03.svtplay.mkv');
   });
+
+  it('renders video and audio codec substitutions when provided', () => {
+    const config = testConfig('/tmp/nzb-relay-test', {
+      TEMPLATE_EPISODE: '{title}.s{season}e{episode}.{quality}p.{videoCodec}.{audioCodec}.{service}.{ext}'
+    });
+
+    expect(
+      renderDownloadFilename(config, {
+        title: 'Show Name',
+        service: 'svtplay',
+        quality: '1080',
+        season: 1,
+        episode: 2,
+        videoCodec: 'h264',
+        audioCodec: 'aac'
+      })
+    ).toBe('Show.Name.s01e02.1080p.h264.aac.svtplay.mkv');
+  });
 });

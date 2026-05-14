@@ -7,6 +7,8 @@ import {
   buildFfmpegDownloadMuxArgs,
   buildFfmpegSubtitleMuxArgs,
   buildSvtplayDownloadArgs,
+  normalizeCodecName,
+  parseFfprobeCodecs,
   removeDownloadSidecars,
   subtitleLanguageFromPath,
   subtitleTextForLanguageDetection
@@ -145,6 +147,19 @@ describe('download worker', () => {
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.en.vtt')).toBe('und');
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.se.srt')).toBe('und');
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.unknown.srt')).toBe('und');
+  });
+
+  it('parses and normalizes ffprobe codec names', () => {
+    expect(normalizeCodecName('hevc')).toBe('h265');
+    expect(normalizeCodecName('avc1')).toBe('h264');
+    expect(
+      parseFfprobeCodecs(JSON.stringify({
+        streams: [
+          { codec_type: 'video', codec_name: 'hevc' },
+          { codec_type: 'audio', codec_name: 'aac' }
+        ]
+      }))
+    ).toEqual({ videoCodec: 'h265', audioCodec: 'aac' });
   });
 
   it('extracts subtitle text for language detection', async () => {

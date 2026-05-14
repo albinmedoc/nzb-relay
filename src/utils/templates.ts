@@ -8,6 +8,8 @@ interface TemplateInput {
   season?: number | null;
   episode?: number | null;
   ext?: string;
+  videoCodec?: string | null;
+  audioCodec?: string | null;
 }
 
 export function renderDownloadFilename(config: Config, input: TemplateInput): string {
@@ -29,14 +31,19 @@ export function renderTemplate(template: string, input: TemplateInput): string {
     title: sanitizeToken(input.title),
     service: sanitizeToken(input.service),
     quality: sanitizeToken(input.quality ?? ''),
+    videoCodec: sanitizeToken(input.videoCodec ?? ''),
+    audioCodec: sanitizeToken(input.audioCodec ?? ''),
     season: input.season == null ? '' : String(input.season).padStart(2, '0'),
     episode: input.episode == null ? '' : String(input.episode).padStart(2, '0'),
     ext: sanitizeToken(input.ext ?? 'mkv')
   };
 
-  const rendered = template.replace(/\{(title|service|quality|season|episode|ext)\}/g, (_, key: keyof typeof replacements) => {
-    return replacements[key];
-  });
+  const rendered = template.replace(
+    /\{(title|service|quality|videoCodec|audioCodec|season|episode|ext)\}/g,
+    (_, key: keyof typeof replacements) => {
+      return replacements[key];
+    }
+  );
 
   const cleaned = rendered
     .replace(/\s+/g, '.')
@@ -55,4 +62,3 @@ export function sanitizeToken(value: string): string {
     .replace(/\.{2,}/g, '.')
     .replace(/^\.+|\.+$/g, '');
 }
-

@@ -73,6 +73,19 @@ export function getFileOrThrow(db: AppDatabase, id: string): FileRow {
   return row;
 }
 
+export function updateRunningFileFilename(db: AppDatabase, id: string, filename: string): FileRow | null {
+  const result = db
+    .prepare(
+      `
+        UPDATE file
+        SET filename = ?
+        WHERE id = ? AND status = 'running' AND deleted = 0
+      `
+    )
+    .run(filename, id);
+  return result.changes === 1 ? getFileOrThrow(db, id) : null;
+}
+
 export function listFiles(
   db: AppDatabase,
   limit: number,
