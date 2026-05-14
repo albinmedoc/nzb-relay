@@ -10,6 +10,7 @@ import { DownloadWorker } from './workers/download-worker.js';
 import { NzbWorker } from './workers/nzb-worker.js';
 import { WatchlistWorker } from './workers/watchlist-worker.js';
 import { WebhookDispatcher } from './workers/webhook-dispatcher.js';
+import { IndexerUploadWorker } from './workers/indexer-upload-worker.js';
 
 export interface Runtime {
   config: Config;
@@ -21,6 +22,7 @@ export interface Runtime {
     nzb: NzbWorker;
     watchlist: WatchlistWorker;
     webhooks: WebhookDispatcher;
+    indexerUploads: IndexerUploadWorker;
   };
   startHttp(): Server;
   stop(): Promise<void>;
@@ -52,6 +54,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const nzb = new NzbWorker(db, config, logger);
     const watchlist = new WatchlistWorker(db, config, logger);
     const webhooks = new WebhookDispatcher(db, config, logger);
+    const indexerUploads = new IndexerUploadWorker(db, config, logger);
     const app = createApp({
       db,
       config,
@@ -67,6 +70,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       nzb.start();
       watchlist.start();
       webhooks.start();
+      indexerUploads.start();
     }
 
     let server: Server | null = null;
@@ -80,7 +84,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         downloads,
         nzb,
         watchlist,
-        webhooks
+        webhooks,
+        indexerUploads
       },
       startHttp() {
         server = serve({
@@ -92,7 +97,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       async stop() {
         await closeServer(server);
-        await Promise.all([downloads.stop(), nzb.stop(), watchlist.stop(), webhooks.stop()]);
+        await Promise.all([downloads.stop(), nzb.stop(), watchlist.stop(), webhooks.stop(), indexerUploads.stop()]);
         db.close();
         await releaseLock?.();
       }

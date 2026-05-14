@@ -55,6 +55,48 @@ describe('config and templates', () => {
     expect(loadConfig({ CORS_ORIGINS: '*' }).cors.origins).toBe('*');
   });
 
+  it('loads generic indexer upload targets', () => {
+    const config = loadConfig({
+      INDEXER_UPLOADS_JSON: JSON.stringify([
+        {
+          name: 'drunkenslug',
+          url: 'https://nzbs.drunkenslug.com/upload.php',
+          fileField: 'files[]'
+        }
+      ])
+    });
+
+    expect(config.indexerUploads).toEqual([
+      {
+        name: 'drunkenslug',
+        url: 'https://nzbs.drunkenslug.com/upload.php',
+        method: 'POST',
+        format: 'multipart',
+        fileField: 'files[]',
+        filenameTemplate: '{releaseName}.nzb',
+        headers: {},
+        fields: {}
+      }
+    ]);
+  });
+
+  it('validates indexer upload configuration', () => {
+    expect(() => loadConfig({ INDEXER_UPLOADS_JSON: 'not-json' })).toThrow('INDEXER_UPLOADS_JSON must be valid JSON');
+    expect(() =>
+      loadConfig({
+        INDEXER_UPLOADS_JSON: JSON.stringify([
+          { name: 'one', url: 'https://one.example/upload' },
+          { name: 'one', url: 'https://two.example/upload' }
+        ])
+      })
+    ).toThrow('duplicate indexer upload name: one');
+    expect(() =>
+      loadConfig({
+        INDEXER_UPLOADS_JSON: JSON.stringify([{ name: 'bad', url: 'https://example.test/upload', format: 'ftp' }])
+      })
+    ).toThrow();
+  });
+
   it('uses USENET_NEWSGROUPS and accepts previous variable names as fallbacks', () => {
     expect(loadConfig({ USENET_NEWSGROUPS: 'alt.binaries.tv, alt.binaries.misc' }).usenet.newsgroups).toEqual([
       'alt.binaries.tv',

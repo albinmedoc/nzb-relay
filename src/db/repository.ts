@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { AppDatabase } from './client.js';
-import type { ErrorCode, FileRow, JobStatus, NzbFileSummary, NzbRow, WebhookDeliveryRow } from '../types.js';
+import type {
+  ErrorCode,
+  FileRow,
+  IndexerUploadRow,
+  JobStatus,
+  NzbFileSummary,
+  NzbRow,
+  WebhookDeliveryRow
+} from '../types.js';
 import { enqueueWebhook } from '../webhooks.js';
 import { nowIso } from '../utils/time.js';
 import { sanitizeToken } from '../utils/templates.js';
@@ -499,6 +507,101 @@ export function recoverFileInterrupted(db: AppDatabase, config: Config, row: Fil
 
 export function recoverNzbInterrupted(db: AppDatabase, config: Config, row: NzbRow): boolean {
   return transitionNzbFailed(db, config, row, 'interrupted_by_restart', 'interrupted by restart');
+}
+
+export function enqueueIndexerUploads(db: AppDatabase, config: Config, row: NzbRow, createdAt = nowIso()): number {
+  if (config.indexerUploads.length === 0) {
+    return 0;
+  }
+
+  return db.transaction(() => {
+    let inserted = 0;
+    const insert = db.prepare(
+      `
+        INSERT OR IGNORE INTO indexer_upload (
+          id, nzbId, indexerName, url, status, attempts, nextAttemptAt,
+          lastError, createdAt, updatedAt, uploadedAt
+        )
+        VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?, ?, NULL)
+      `
+    );
+
+    for (const target of config.indexerUploads) {
+      const result = insert.run(randomUUID(), row.id, target.name, target.url, createdAt, createdAt, createdAt);
+      inserted += result.changes;
+    }
+
+    return inserted;
+  })();
+}
+
+export function listIndexerUploadsForNzb(db: AppDatabase, nzbId: string): IndexerUploadRow[] {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM indexer_upload
+        WHERE nzbId = ?
+        ORDER BY createdAt ASC, indexerName ASC
+      `
+    )
+    .all(nzbId) as IndexerUploadRow[];
+}
+
+export function nextDueIndexerUpload(db: AppDatabase, now = nowIso()): IndexerUploadRow | null {
+  return (
+    (db
+      .prepare(
+        `
+          SELECT *
+          FROM indexer_upload
+          WHERE status = 'pending'
+            AND nextAttemptAt IS NOT NULL
+            AND nextAttemptAt <= ?
+          ORDER BY nextAttemptAt ASC, createdAt ASC
+          LIMIT 1
+        `
+      )
+      .get(now) as IndexerUploadRow | undefined) ?? null
+  );
+}
+
+export function markIndexerUploadCompleted(db: AppDatabase, id: string, uploadedAt = nowIso()): void {
+  db.prepare(
+    `
+      UPDATE indexer_upload
+      SET status = 'completed', nextAttemptAt = NULL, lastError = NULL, uploadedAt = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(uploadedAt, uploadedAt, id);
+}
+
+export function markIndexerUploadRetry(
+  db: AppDatabase,
+  id: string,
+  attempts: number,
+  nextAttemptAt: string,
+  lastError: string
+): void {
+  const updatedAt = nowIso();
+  db.prepare(
+    `
+      UPDATE indexer_upload
+      SET attempts = ?, nextAttemptAt = ?, status = 'pending', lastError = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(attempts, nextAttemptAt, lastError, updatedAt, id);
+}
+
+export function markIndexerUploadFailed(db: AppDatabase, id: string, attempts: number, lastError: string): void {
+  const updatedAt = nowIso();
+  db.prepare(
+    `
+      UPDATE indexer_upload
+      SET attempts = ?, nextAttemptAt = NULL, status = 'failed', lastError = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(attempts, lastError, updatedAt, id);
 }
 
 export function nextDueWebhook(db: AppDatabase, now = nowIso()): WebhookDeliveryRow | null {

@@ -3,9 +3,11 @@ import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
 import {
   claimFile,
+  enqueueIndexerUploads,
   getFile,
   insertFile,
   insertNzb,
+  listIndexerUploadsForNzb,
   recoverFileInterrupted,
   transitionFileCompleted,
   transitionFileFailed
@@ -61,6 +63,28 @@ describe('database invariants', () => {
       `file not completed: ${row.id} (pending)`
     );
     expect((db.prepare('SELECT COUNT(*) AS count FROM nzb').get() as { count: number }).count).toBe(0);
+  });
+
+  it('queues indexer uploads idempotently and removes them with the NZB', () => {
+    config = testConfig(dataDir, {
+      INDEXER_UPLOADS_JSON: JSON.stringify([{ name: 'drunkenslug', url: 'https://nzbs.drunkenslug.com/upload.php' }])
+    });
+    db.close();
+    db = createTestDb(config);
+    const file = insertFile(db, fileInput('https://example.test/indexer-upload'));
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-05T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Title.s01e01.svtplay', fileIds: [file.id] });
+
+    expect(enqueueIndexerUploads(db, config, nzb)).toBe(1);
+    expect(enqueueIndexerUploads(db, config, nzb)).toBe(0);
+    expect(listIndexerUploadsForNzb(db, nzb.id)).toHaveLength(1);
+
+    db.prepare('DELETE FROM nzb WHERE id = ?').run(nzb.id);
+
+    expect(listIndexerUploadsForNzb(db, nzb.id)).toEqual([]);
   });
 
   it('recovers deleted running files without enqueueing a webhook', () => {

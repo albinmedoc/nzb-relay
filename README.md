@@ -75,6 +75,20 @@ See [docs/ENVIRONMENTS.md](docs/ENVIRONMENTS.md) for the full list of supported 
 
 `USENET_NEWSGROUPS` defaults to the `alt.binaries.newznzb.*` alphabet groups and can be set to a comma-separated list to override them. `USENET_NEWSGROUPS_PER_UPLOAD` defaults to `20`; each upload randomly picks that many groups so providers with a 20-group crosspost limit do not reject posts.
 
+Optional indexer uploads can be enabled with `INDEXER_UPLOADS_JSON`. For DrunkenSlug's upload endpoint:
+
+```json
+[
+  {
+    "name": "drunkenslug",
+    "url": "https://nzbs.drunkenslug.com/upload.php",
+    "fileField": "files[]"
+  }
+]
+```
+
+Indexer upload failures are retried and reported on the NZB API response, but they do not fail a completed Usenet upload.
+
 The service listens on `http://localhost:3001` by default. Health is available at `http://localhost:3001/v1/health`.
 The frontend listens on `http://localhost:8080` in the compose example. If the frontend is served from a different origin, set backend `CORS_ORIGINS` to that browser origin.
 Open the frontend with Basic Auth credentials where the username is the backend URL and the password is the API key. When using credentials in the URL, percent-encode the backend URL:

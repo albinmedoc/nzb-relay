@@ -10,6 +10,7 @@ import type { AppDatabase } from '../db/client.js';
 import {
   canonicalFilesForNzb,
   claimNzb,
+  enqueueIndexerUploads,
   getNzbOrThrow,
   nextPendingNzb,
   transitionNzbCompleted,
@@ -131,7 +132,13 @@ export class NzbWorker {
       ];
       await this.runStep(row, 'nyuu', buildNyuuArgs(this.config, row, password, postFiles), logStream, controller);
 
-      transitionNzbCompleted(this.db, this.config, row);
+      if (transitionNzbCompleted(this.db, this.config, row)) {
+        try {
+          enqueueIndexerUploads(this.db, this.config, getNzbOrThrow(this.db, row.id));
+        } catch (error) {
+          this.logger.error({ event: 'indexer_upload.enqueue_failed', nzbId: row.id, error }, 'failed to enqueue indexer uploads');
+        }
+      }
 
       try {
         await removeNzbWorkDir(this.config, row);

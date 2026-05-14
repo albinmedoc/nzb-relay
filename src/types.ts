@@ -2,6 +2,7 @@ import type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType } from '@nz
 
 export type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType };
 export type WebhookStatus = 'pending' | 'delivered' | 'failed';
+export type IndexerUploadStatus = 'pending' | 'completed' | 'failed';
 
 export type ErrorCode =
   | 'insufficient_space'
@@ -53,6 +54,20 @@ export interface WebhookDeliveryRow {
   status: WebhookStatus;
   lastError: string | null;
   createdAt: string;
+}
+
+export interface IndexerUploadRow {
+  id: string;
+  nzbId: string;
+  indexerName: string;
+  url: string;
+  status: IndexerUploadStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  uploadedAt: string | null;
 }
 
 export interface WatchlistSourceRow {

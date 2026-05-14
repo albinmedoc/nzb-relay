@@ -39,6 +39,7 @@ import {
   insertFile,
   insertNzb,
   isFileReferencedByNzb,
+  listIndexerUploadsForNzb,
   listFiles,
   listNzbs,
   markFileDeleted,
@@ -572,6 +573,16 @@ function serializeNzb(db: AppDatabase, row: NzbRow): NzbJobResponse {
       status: file.status,
       createdAt: file.createdAt,
       downloadedAt: file.downloadedAt
+    })),
+    indexerUploads: listIndexerUploadsForNzb(db, row.id).map((upload) => ({
+      id: upload.id,
+      indexerName: upload.indexerName,
+      url: upload.url,
+      status: upload.status,
+      attempts: upload.attempts,
+      nextAttemptAt: upload.nextAttemptAt,
+      lastError: upload.lastError,
+      uploadedAt: upload.uploadedAt
     }))
   };
 }

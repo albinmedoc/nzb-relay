@@ -36,6 +36,7 @@ export interface Config {
     newsgroups: string[];
     newsgroupsPerUpload: number;
   };
+  indexerUploads: IndexerUploadConfig[];
   webhooks: {
     defaultUrl: string;
     downloadCompletedUrl: string;
@@ -44,6 +45,17 @@ export interface Config {
     nzbFailedUrl: string;
     secret: string;
   };
+}
+
+export interface IndexerUploadConfig {
+  name: string;
+  url: string;
+  method: 'POST' | 'PUT';
+  format: 'multipart' | 'raw';
+  fileField: string;
+  filenameTemplate: string;
+  headers: Record<string, string>;
+  fields: Record<string, string>;
 }
 
 const DEFAULT_TEMPLATES = {
@@ -106,6 +118,7 @@ const envSchema = z
     USENET_NEWSGROUP: z.string().optional(),
     USENET_RELEASE_GROUP: z.string().optional(),
     USENET_NEWSGROUPS_PER_UPLOAD: z.string().optional(),
+    INDEXER_UPLOADS_JSON: z.string().optional(),
     WEBHOOK_URL: z.string().optional(),
     WEBHOOK_DOWNLOAD_COMPLETED_URL: z.string().optional(),
     WEBHOOK_DOWNLOAD_FAILED_URL: z.string().optional(),
@@ -165,6 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         'USENET_NEWSGROUPS_PER_UPLOAD'
       )
     },
+    indexerUploads: readIndexerUploads(parsedEnv.INDEXER_UPLOADS_JSON),
     webhooks: {
       defaultUrl: parsedEnv.WEBHOOK_URL ?? '',
       downloadCompletedUrl: parsedEnv.WEBHOOK_DOWNLOAD_COMPLETED_URL ?? '',
@@ -174,6 +188,53 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       secret: parsedEnv.WEBHOOK_SECRET ?? ''
     }
   };
+}
+
+const indexerUploadSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    url: z.string().trim().url(),
+    method: z.enum(['POST', 'PUT']).optional(),
+    format: z.enum(['multipart', 'raw']).optional(),
+    fileField: z.string().min(1).optional(),
+    filenameTemplate: z.string().min(1).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    fields: z.record(z.string(), z.string()).optional()
+  })
+  .strict();
+
+function readIndexerUploads(value: string | undefined): IndexerUploadConfig[] {
+  if (!value) {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('INDEXER_UPLOADS_JSON must be valid JSON');
+  }
+
+  const entries = z.array(indexerUploadSchema).parse(parsed).map((entry) => ({
+    name: entry.name,
+    url: entry.url,
+    method: entry.method ?? 'POST',
+    format: entry.format ?? 'multipart',
+    fileField: entry.fileField ?? 'file',
+    filenameTemplate: entry.filenameTemplate ?? '{releaseName}.nzb',
+    headers: entry.headers ?? {},
+    fields: entry.fields ?? {}
+  }));
+
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (seen.has(entry.name)) {
+      throw new Error(`duplicate indexer upload name: ${entry.name}`);
+    }
+    seen.add(entry.name);
+  }
+
+  return entries;
 }
 
 export function resolveWebhookUrl(config: Config, event: WebhookEvent): string {

@@ -406,7 +406,25 @@ Indexes:
 
 Composite primary key `(nzbId, fileId)`.
 
-### 4.4 `webhook_deliveries`
+### 4.4 `indexer_upload`
+
+| Column          | Type          | Notes |
+|-----------------|---------------|-------|
+| `id`            | TEXT PK       | UUID |
+| `nzbId`         | TEXT FK → nzb | ON DELETE CASCADE |
+| `indexerName`   | TEXT          | Configured target name |
+| `url`           | TEXT          | Upload URL snapshot |
+| `status`        | TEXT          | `pending` \| `completed` \| `failed` |
+| `attempts`      | INTEGER       | Default 0 |
+| `nextAttemptAt` | TEXT          | Null when terminal |
+| `lastError`     | TEXT          | Nullable |
+| `createdAt`     | TEXT          | |
+| `updatedAt`     | TEXT          | |
+| `uploadedAt`    | TEXT          | Nullable |
+
+Unique key: `(nzbId, indexerName)`. Index: `(status, nextAttemptAt)` for the upload worker poll.
+
+### 4.5 `webhook_deliveries`
 
 | Column          | Type     | Notes                                              |
 |-----------------|----------|----------------------------------------------------|
@@ -426,9 +444,10 @@ Index: `(status, nextAttemptAt)` for the dispatcher poll.
 
 ### 5.1 Workers
 
-Three independent in-process workers, each driven by a poll loop on its DB queue:
+Four independent in-process workers, each driven by a poll loop on its DB queue:
 - **Download worker** — picks the oldest `pending` `file` row, atomically transitions it `pending → running` (single `UPDATE … SET status='running' WHERE id=? AND status='pending'`), then spawns `svtplay-dl`, captures stdout/stderr to the log file (line-flushed), waits for exit. On exit, transitions to `completed` or `failed` per §5.2.
 - **NZB worker** — picks the oldest `pending` `nzb` row, atomically transitions it `pending → running`, then runs the RAR → parpar → nyuu pipeline, writes the NZB to `DATA_DIR/nzb/`. Same terminal transition rules.
+- **Indexer upload worker** — picks `pending` rows in `indexer_upload` where `nextAttemptAt <= now()`, uploads the completed NZB to the configured HTTP target, and updates the row. Its failures do not change the parent NZB status.
 - **Webhook dispatcher** — picks `pending` rows in `webhook_deliveries` where `nextAttemptAt <= now()`, POSTs them, updates the row. (Note: `webhook_deliveries.status` does not include `running` — the dispatcher's in-flight state is process-local; persistence flips straight from `pending` to `delivered` or back to `pending` with a bumped `attempts`.)
 
 The `pending → running` transition is a separate write from the terminal transition; only the terminal transition is bound to the `webhook_deliveries` insert (§5.2). A crash mid-job leaves the row in `running` state, which §5.5 recovers at next boot.
@@ -632,6 +651,26 @@ alt.binaries.newznzb.zulu
 | `WEBHOOK_NZB_FAILED_URL` | _(empty)_ | Override for `nzb.failed` |
 | `WEBHOOK_SECRET` | _(empty)_ | When set, every webhook gets the `X-Webhook-Signature` HMAC header |
 
+### 7.5 Indexer uploads
+
+| Var | Default | Meaning |
+|---|---|---|
+| `INDEXER_UPLOADS_JSON` | _(empty)_ | Optional JSON array of generic HTTP targets that receive each completed NZB. Empty means disabled. |
+
+Each target has `name`, `url`, optional `method` (`POST` or `PUT`, default `POST`), optional `format` (`multipart` or `raw`, default `multipart`), optional `fileField` (default `file`, passed through verbatim so `files[]` works), optional `filenameTemplate` (default `{releaseName}.nzb`), and optional string maps `headers` and `fields`.
+
+Example for DrunkenSlug:
+
+```json
+[
+  {
+    "name": "drunkenslug",
+    "url": "https://nzbs.drunkenslug.com/upload.php",
+    "fileField": "files[]"
+  }
+]
+```
+
 ## 8. Storage Layout
 
 All paths are under `DATA_DIR` (default `/data`).
@@ -757,7 +796,7 @@ Per `pending` `nzb` row (after the worker has atomically transitioned it to `run
      <DATA_DIR>/nzb/<nzbId>/work/<release-name>.par2 \
      <DATA_DIR>/nzb/<nzbId>/work/<release-name>.vol*.par2
    ```
-9. On success of all three steps: update row to `status='completed'`, set `postedAt`, and queue `nzb.completed`. Then remove the working directory `DATA_DIR/nzb/<nzbId>/work/` (the symlinks and rar/par2 staging). **If cleanup of the working directory fails after a successful post, log a `warn`-level application log line (e.g. `{ event: "nzb.cleanup_failed", nzbId, error }`) and continue.** The NZB status remains `completed` and the `nzb.completed` webhook still fires — the post is on Usenet, the row reflects reality, and a leftover staging directory is operational debris that does not warrant marking the job failed or retrying it.
+9. On success of all three steps: update row to `status='completed'`, set `postedAt`, and queue `nzb.completed`. If `INDEXER_UPLOADS_JSON` contains targets, enqueue one `indexer_upload` row per target after the NZB completion commits; enqueue failures are logged and do not change the NZB status. Then remove the working directory `DATA_DIR/nzb/<nzbId>/work/` (the symlinks and rar/par2 staging). **If cleanup of the working directory fails after a successful post, log a `warn`-level application log line (e.g. `{ event: "nzb.cleanup_failed", nzbId, error }`) and continue.** The NZB status remains `completed` and the `nzb.completed` webhook still fires — the post is on Usenet, the row reflects reality, and a leftover staging directory is operational debris that does not warrant marking the job failed or retrying it.
 10. On any step's failure: update to `status='failed'`, capture the failing tool's last stderr line as `error`, set `errorCode` to the appropriate token from §6.1 (e.g. `child_exit_nonzero` for a non-zero rar/parpar/nyuu exit, `insufficient_space` if the failure is `ENOSPC` mid-run), queue `nzb.failed`, run §5.4 cleanup. Articles already accepted by nyuu before the failure cannot be unposted — that's accepted behaviour; the row is failed regardless.
 
 ### 9.3 Pipeline invariants

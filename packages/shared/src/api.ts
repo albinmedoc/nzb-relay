@@ -152,6 +152,16 @@ export interface NzbJobResponse {
     createdAt: string;
     downloadedAt: string | null;
   }>;
+  indexerUploads: Array<{
+    id: string;
+    indexerName: string;
+    url: string;
+    status: 'pending' | 'completed' | 'failed';
+    attempts: number;
+    nextAttemptAt: string | null;
+    lastError: string | null;
+    uploadedAt: string | null;
+  }>;
 }
 
 export interface WatchlistSourceResponse {

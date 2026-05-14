@@ -59,6 +59,29 @@ export const nzbFiles = sqliteTable(
   })
 );
 
+export const indexerUpload = sqliteTable(
+  'indexer_upload',
+  {
+    id: text('id').primaryKey(),
+    nzbId: text('nzbId')
+      .notNull()
+      .references(() => nzb.id, { onDelete: 'cascade' }),
+    indexerName: text('indexerName').notNull(),
+    url: text('url').notNull(),
+    status: text('status').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: text('nextAttemptAt'),
+    lastError: text('lastError'),
+    createdAt: text('createdAt').notNull(),
+    updatedAt: text('updatedAt').notNull(),
+    uploadedAt: text('uploadedAt')
+  },
+  (table) => ({
+    nzbNameUnique: uniqueIndex('indexer_upload_nzb_name_unique').on(table.nzbId, table.indexerName),
+    statusNextAttemptIdx: index('indexer_upload_status_next_attempt_idx').on(table.status, table.nextAttemptAt)
+  })
+);
+
 export const webhookDeliveries = sqliteTable(
   'webhook_deliveries',
   {

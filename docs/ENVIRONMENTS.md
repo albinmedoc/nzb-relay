@@ -165,6 +165,41 @@ Event-specific variables override `WEBHOOK_URL` for that event only.
 | `WEBHOOK_NZB_FAILED_URL` | no | empty | Destination for `nzb.failed`. Overrides `WEBHOOK_URL`. |
 | `WEBHOOK_SECRET` | no | empty | Secret used to sign webhook request bodies. When set, deliveries include `X-Webhook-Signature: sha256=<hex>`, where the hex value is `HMAC-SHA256(WEBHOOK_SECRET, raw_request_body)`. |
 
+## Indexer Uploads
+
+Indexer uploads are optional. When configured, each completed NZB is queued for upload to every configured HTTP target. These deliveries are retried independently from the NZB job; a failed indexer upload does not change the parent NZB from `completed` to `failed`.
+
+| Variable | Required | Default | Description |
+|---|---:|---|---|
+| `INDEXER_UPLOADS_JSON` | no | empty | JSON array of generic HTTP upload targets. Empty means no indexer uploads are queued. |
+
+DrunkenSlug-style uploads use a multipart file field named `files[]`:
+
+```json
+[
+  {
+    "name": "drunkenslug",
+    "url": "https://nzbs.drunkenslug.com/upload.php",
+    "fileField": "files[]"
+  }
+]
+```
+
+Supported target fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `name` | required | Unique target name used in API status and retry rows. |
+| `url` | required | Upload endpoint URL. |
+| `method` | `POST` | `POST` or `PUT`. |
+| `format` | `multipart` | `multipart` sends a form upload; `raw` sends the NZB as the request body. |
+| `fileField` | `file` | Multipart file field name, passed through verbatim. Names such as `files[]` are supported. |
+| `filenameTemplate` | `{releaseName}.nzb` | Filename used for the uploaded NZB part or raw content disposition. |
+| `headers` | `{}` | String map of extra request headers. |
+| `fields` | `{}` | String map of extra multipart fields. Ignored for `raw`. |
+
+`headers`, `fields`, and `filenameTemplate` support `{nzbId}`, `{releaseName}`, `{nzbFile}`, and `{postedAt}` substitutions.
+
 ## Tooling And Container Variables
 
 These variables are not part of normal application configuration, but they appear in project tooling or the container image.

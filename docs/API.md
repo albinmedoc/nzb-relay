@@ -554,6 +554,18 @@ Response:
           "createdAt": "2026-05-05T10:55:00.000Z",
           "downloadedAt": "2026-05-05T11:00:00.000Z"
         }
+      ],
+      "indexerUploads": [
+        {
+          "id": "upload-uuid",
+          "indexerName": "drunkenslug",
+          "url": "https://nzbs.drunkenslug.com/upload.php",
+          "status": "completed",
+          "attempts": 0,
+          "nextAttemptAt": null,
+          "lastError": null,
+          "uploadedAt": "2026-05-05T12:11:00.000Z"
+        }
       ]
     }
   ],
@@ -564,6 +576,7 @@ Response:
 ```
 
 Nested files are returned in canonical order: `episode ASC NULLS LAST, fileId ASC`.
+`indexerUploads` is empty unless optional indexer upload targets are configured.
 
 ### `GET /v1/nzb/:nzbId`
 
