@@ -419,7 +419,7 @@ export function buildFfmpegDownloadMuxArgs(
 
   for (const mediaPath of mediaPaths) {
     if (/\.ts$/i.test(mediaPath)) {
-      args.push('-f', 'mpegts');
+      args.push('-analyzeduration', '100M', '-probesize', '100M', '-f', 'mpegts');
     }
     args.push('-i', mediaPath);
   }

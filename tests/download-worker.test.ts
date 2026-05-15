@@ -112,10 +112,18 @@ describe('download worker', () => {
       []
     )).toEqual([
       '-y',
+      '-analyzeduration',
+      '100M',
+      '-probesize',
+      '100M',
       '-f',
       'mpegts',
       '-i',
       '/data/downloads/file-1/Title.svtplay.ts',
+      '-analyzeduration',
+      '100M',
+      '-probesize',
+      '100M',
       '-f',
       'mpegts',
       '-i',
