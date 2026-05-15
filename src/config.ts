@@ -115,8 +115,6 @@ const envSchema = z
     USENET_USER: z.string().optional(),
     USENET_PASS: z.string().optional(),
     USENET_NEWSGROUPS: z.string().optional(),
-    USENET_NEWSGROUP: z.string().optional(),
-    USENET_RELEASE_GROUP: z.string().optional(),
     USENET_NEWSGROUPS_PER_UPLOAD: z.string().optional(),
     INDEXER_UPLOADS_JSON: z.string().optional(),
     WEBHOOK_URL: z.string().optional(),
@@ -171,7 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ssl: readBool(parsedEnv.USENET_SSL, true),
       user: parsedEnv.USENET_USER ?? '',
       pass: parsedEnv.USENET_PASS ?? '',
-      newsgroups: readNewsgroups(parsedEnv),
+      newsgroups: readNewsgroups(parsedEnv.USENET_NEWSGROUPS),
       newsgroupsPerUpload: readPositiveInt(
         parsedEnv.USENET_NEWSGROUPS_PER_UPLOAD,
         20,
@@ -332,8 +330,7 @@ function readCorsOrigins(value: string | undefined): '*' | string[] {
   return origins;
 }
 
-function readNewsgroups(env: z.infer<typeof envSchema>): string[] {
-  const value = env.USENET_NEWSGROUPS || env.USENET_NEWSGROUP || env.USENET_RELEASE_GROUP;
+function readNewsgroups(value: string | undefined): string[] {
   if (!value) {
     return [...DEFAULT_USENET_NEWSGROUPS];
   }

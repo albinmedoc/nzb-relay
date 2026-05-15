@@ -97,24 +97,11 @@ describe('config and templates', () => {
     ).toThrow();
   });
 
-  it('uses USENET_NEWSGROUPS and accepts previous variable names as fallbacks', () => {
+  it('uses USENET_NEWSGROUPS when set', () => {
     expect(loadConfig({ USENET_NEWSGROUPS: 'alt.binaries.tv, alt.binaries.misc' }).usenet.newsgroups).toEqual([
       'alt.binaries.tv',
       'alt.binaries.misc'
     ]);
-    expect(loadConfig({ USENET_NEWSGROUP: 'alt.binaries.single' }).usenet.newsgroups).toEqual([
-      'alt.binaries.single'
-    ]);
-    expect(loadConfig({ USENET_RELEASE_GROUP: 'alt.binaries.legacy' }).usenet.newsgroups).toEqual([
-      'alt.binaries.legacy'
-    ]);
-    expect(
-      loadConfig({
-        USENET_NEWSGROUPS: 'alt.binaries.tv,alt.binaries.misc',
-        USENET_NEWSGROUP: 'alt.binaries.single',
-        USENET_RELEASE_GROUP: 'alt.binaries.legacy'
-      }).usenet.newsgroups
-    ).toEqual(['alt.binaries.tv', 'alt.binaries.misc']);
   });
 
   it('loads and validates the per-upload newsgroup count', () => {

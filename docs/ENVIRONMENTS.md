@@ -135,21 +135,6 @@ alt.binaries.newznzb.yankee
 alt.binaries.newznzb.zulu
 ```
 
-### Legacy Usenet Aliases
-
-These aliases are still accepted for backwards compatibility:
-
-| Variable | Priority | Description |
-|---|---:|---|
-| `USENET_NEWSGROUP` | after `USENET_NEWSGROUPS` | Single-value or comma-separated legacy fallback for `USENET_NEWSGROUPS`. |
-| `USENET_RELEASE_GROUP` | after `USENET_NEWSGROUP` | Older fallback for `USENET_NEWSGROUPS`. |
-
-Priority is:
-
-```text
-USENET_NEWSGROUPS -> USENET_NEWSGROUP -> USENET_RELEASE_GROUP -> built-in defaults
-```
-
 ## Webhooks
 
 Webhook URLs are optional. If no matching URL is configured for an event, no delivery is queued.

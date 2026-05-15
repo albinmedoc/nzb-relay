@@ -128,11 +128,11 @@ The same release tag is baked into the image as `VERSION`, which is returned by 
 
 For a non-prerelease release tag such as `v1.1.1`, the workflow publishes:
 
-- `ghcr.io/<owner>/<repo>:v1`
-- `ghcr.io/<owner>/<repo>:v1.1`
-- `ghcr.io/<owner>/<repo>:v1.1.1`
-- `ghcr.io/<owner>/<repo>:latest`
-- `ghcr.io/<owner>/<repo>-frontend:v1`
-- `ghcr.io/<owner>/<repo>-frontend:v1.1`
-- `ghcr.io/<owner>/<repo>-frontend:v1.1.1`
-- `ghcr.io/<owner>/<repo>-frontend:latest`
+- `ghcr.io/albinmedoc/nzb-relay:v1`
+- `ghcr.io/albinmedoc/nzb-relay:v1.1`
+- `ghcr.io/albinmedoc/nzb-relay:v1.1.1`
+- `ghcr.io/albinmedoc/nzb-relay:latest`
+- `ghcr.io/albinmedoc/nzb-relay-frontend:v1`
+- `ghcr.io/albinmedoc/nzb-relay-frontend:v1.1`
+- `ghcr.io/albinmedoc/nzb-relay-frontend:v1.1.1`
+- `ghcr.io/albinmedoc/nzb-relay-frontend:latest`
