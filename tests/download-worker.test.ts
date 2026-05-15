@@ -8,6 +8,7 @@ import {
   buildFfmpegSubtitleMuxArgs,
   buildSvtplayDownloadArgs,
   normalizeCodecName,
+  normalizeMpegTsPackets,
   parseFfprobeCodecs,
   removeDownloadSidecars,
   subtitleLanguageFromPath,
@@ -113,17 +114,29 @@ describe('download worker', () => {
     )).toEqual([
       '-y',
       '-analyzeduration',
-      '100M',
+      '500M',
       '-probesize',
-      '100M',
+      '500M',
+      '-max_probe_packets',
+      '500000',
+      '-scan_all_pmts',
+      '1',
+      '-merge_pmt_versions',
+      '1',
       '-f',
       'mpegts',
       '-i',
       '/data/downloads/file-1/Title.svtplay.ts',
       '-analyzeduration',
-      '100M',
+      '500M',
       '-probesize',
-      '100M',
+      '500M',
+      '-max_probe_packets',
+      '500000',
+      '-scan_all_pmts',
+      '1',
+      '-merge_pmt_versions',
+      '1',
       '-f',
       'mpegts',
       '-i',
@@ -215,4 +228,26 @@ describe('download worker', () => {
     expect(logStream.write).toHaveBeenCalledWith('removed download sidecar Title.svtplay.ttml\n');
     expect(logStream.write).toHaveBeenCalledWith('removed download sidecar Title.svtplay.nfo\n');
   });
+
+  it('normalizes mixed MPEG-TS packet sizes to 188-byte packets', async () => {
+    const inputPath = path.join(dataDir, 'mixed.ts');
+    const outputPath = path.join(dataDir, 'mixed.normalized.ts');
+    const packet188 = mpegTsPacket(0x10);
+    const packet192 = Buffer.concat([Buffer.from([1, 2, 3, 4]), mpegTsPacket(0x20)]);
+    const packet204 = Buffer.concat([mpegTsPacket(0x30), Buffer.alloc(16, 0xff)]);
+    await fs.writeFile(inputPath, Buffer.concat([packet188, packet192, packet204]));
+
+    const stats = await normalizeMpegTsPackets(inputPath, outputPath);
+
+    expect(stats).toEqual({ packet188: 1, packet192: 1, packet204: 1 });
+    expect(await fs.readFile(outputPath)).toEqual(Buffer.concat([
+      mpegTsPacket(0x10),
+      mpegTsPacket(0x20),
+      mpegTsPacket(0x30)
+    ]));
+  });
 });
+
+function mpegTsPacket(fill: number): Buffer {
+  return Buffer.concat([Buffer.from([0x47]), Buffer.alloc(187, fill)]);
+}

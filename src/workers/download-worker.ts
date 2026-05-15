@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
@@ -191,11 +192,12 @@ export class DownloadWorker {
 
     const sidecars = await subtitleSidecars(this.config, row);
     const tempPath = path.join(downloadDir(this.config, row.id), `${stripMkv(row.filename)}.muxing.mkv`);
+    const muxInputs = await prepareMediaInputsForMux(mediaInputs, logStream, controller.signal);
     const languages = await detectSubtitleLanguages(sidecars, logStream);
     logStream.write(`muxing ${mediaInputs.length} media artifact(s) and ${sidecars.length} subtitle sidecar(s) into ${row.filename}\n`);
     const result = await runLoggedProcess({
       command: 'ffmpeg',
-      args: buildFfmpegDownloadMuxArgs(mediaInputs, sidecars, tempPath, languages),
+      args: buildFfmpegDownloadMuxArgs(muxInputs, sidecars, tempPath, languages),
       logStream,
       signal: controller.signal,
       logger: this.logger,
@@ -211,6 +213,7 @@ export class DownloadWorker {
       throw new DownloadPipelineError('child_exit_nonzero', childFailureSummary('ffmpeg', result));
     }
 
+    await assertMuxedMediaHasRequiredStreams(tempPath, controller.signal);
     await fsp.rename(tempPath, fileMediaPath(this.config, row));
     logStream.write(`muxed download artifacts into ${row.filename}\n`);
   }
@@ -382,6 +385,25 @@ export function probeMediaCodecs(filePath: string, signal?: AbortSignal): Promis
   });
 }
 
+async function assertMuxedMediaHasRequiredStreams(filePath: string, signal?: AbortSignal): Promise<void> {
+  let codecs: MediaCodecs;
+  try {
+    codecs = await probeMediaCodecs(filePath, signal);
+  } catch (error) {
+    await fsp.rm(filePath, { force: true });
+    const message = error instanceof Error ? error.message : String(error);
+    throw new DownloadPipelineError('child_exit_nonzero', `muxed file probe failed: ${message}`);
+  }
+  const missing = [
+    codecs.videoCodec ? '' : 'video',
+    codecs.audioCodec ? '' : 'audio'
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    await fsp.rm(filePath, { force: true });
+    throw new DownloadPipelineError('child_exit_nonzero', `muxed file is missing ${missing.join(' and ')} stream`);
+  }
+}
+
 async function renameDownloadLog(config: Config, from: Pick<FileRow, 'id' | 'filename'>, to: Pick<FileRow, 'id' | 'filename'>): Promise<void> {
   const fromPath = fileLogPath(config, from);
   const toPath = fileLogPath(config, to);
@@ -419,7 +441,20 @@ export function buildFfmpegDownloadMuxArgs(
 
   for (const mediaPath of mediaPaths) {
     if (/\.ts$/i.test(mediaPath)) {
-      args.push('-analyzeduration', '100M', '-probesize', '100M', '-f', 'mpegts');
+      args.push(
+        '-analyzeduration',
+        '500M',
+        '-probesize',
+        '500M',
+        '-max_probe_packets',
+        '500000',
+        '-scan_all_pmts',
+        '1',
+        '-merge_pmt_versions',
+        '1',
+        '-f',
+        'mpegts'
+      );
     }
     args.push('-i', mediaPath);
   }
@@ -532,6 +567,159 @@ async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<
     .map((entry) => path.join(dir, entry))
     .filter((entry) => entry !== expectedPath && !/\.muxing\.mkv$/i.test(entry))
     .sort((left, right) => mediaArtifactSortKey(left).localeCompare(mediaArtifactSortKey(right)));
+}
+
+async function prepareMediaInputsForMux(
+  mediaInputs: string[],
+  logStream: Pick<fs.WriteStream, 'write'>,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const prepared: string[] = [];
+  for (const mediaInput of mediaInputs) {
+    if (!/\.ts$/i.test(mediaInput)) {
+      prepared.push(mediaInput);
+      continue;
+    }
+
+    const normalizedPath = normalizedTsPath(mediaInput);
+    const stats = await normalizeMpegTsPackets(mediaInput, normalizedPath, signal);
+    prepared.push(normalizedPath);
+    logStream.write(
+      `normalized MPEG-TS packets ${path.basename(mediaInput)} -> ${path.basename(normalizedPath)} ` +
+        `(188=${stats.packet188}, 192=${stats.packet192}, 204=${stats.packet204})\n`
+    );
+  }
+  return prepared;
+}
+
+function normalizedTsPath(filePath: string): string {
+  return filePath.replace(/\.ts$/i, '.normalized.ts');
+}
+
+interface MpegTsNormalizeStats {
+  packet188: number;
+  packet192: number;
+  packet204: number;
+}
+
+interface MpegTsPacket {
+  packetSize: 188 | 192 | 204;
+  payloadOffset: number;
+}
+
+export async function normalizeMpegTsPackets(
+  inputPath: string,
+  outputPath: string,
+  signal?: AbortSignal
+): Promise<MpegTsNormalizeStats> {
+  const input = await fsp.open(inputPath, 'r');
+  const output = await fsp.open(outputPath, 'w');
+  const readBuffer = Buffer.allocUnsafe(1024 * 1024);
+  let carry: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  const stats: MpegTsNormalizeStats = { packet188: 0, packet192: 0, packet204: 0 };
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        throw new DownloadPipelineError('child_exit_nonzero', 'mpegts normalization cancelled');
+      }
+
+      const { bytesRead } = await input.read(readBuffer, 0, readBuffer.length, null);
+      const final = bytesRead === 0;
+      carry = final ? carry : Buffer.concat([carry, readBuffer.subarray(0, bytesRead)]);
+      carry = await normalizeMpegTsBuffer(carry, output, stats, final);
+
+      if (final) {
+        break;
+      }
+    }
+  } catch (error) {
+    await fsp.rm(outputPath, { force: true });
+    throw error;
+  } finally {
+    await input.close();
+    await output.close();
+  }
+
+  return stats;
+}
+
+async function normalizeMpegTsBuffer(
+  data: Buffer,
+  output: FileHandle,
+  stats: MpegTsNormalizeStats,
+  final: boolean
+): Promise<Buffer> {
+  let offset = 0;
+  const holdBack = 408;
+
+  while (offset < data.length) {
+    if (!final && data.length - offset < holdBack) {
+      break;
+    }
+
+    const packet = detectMpegTsPacket(data, offset);
+    if (!packet) {
+      if (!final) {
+        break;
+      }
+      throw new DownloadPipelineError(
+        'child_exit_nonzero',
+        `could not normalize MPEG-TS packet at byte ${offset}; remaining=${data.length - offset}`
+      );
+    }
+    if (data.length - offset < packet.packetSize) {
+      if (!final) {
+        break;
+      }
+      throw new DownloadPipelineError(
+        'child_exit_nonzero',
+        `truncated MPEG-TS packet at byte ${offset}; expected=${packet.packetSize}, remaining=${data.length - offset}`
+      );
+    }
+
+    await output.write(data.subarray(offset + packet.payloadOffset, offset + packet.payloadOffset + 188));
+    if (packet.packetSize === 188) {
+      stats.packet188 += 1;
+    } else if (packet.packetSize === 192) {
+      stats.packet192 += 1;
+    } else {
+      stats.packet204 += 1;
+    }
+    offset += packet.packetSize;
+  }
+
+  return data.subarray(offset);
+}
+
+function detectMpegTsPacket(buffer: Buffer, offset: number): MpegTsPacket | null {
+  const remaining = buffer.length - offset;
+  if (buffer[offset + 4] === 0x47 && (buffer[offset] !== 0x47 || remaining === 192)) {
+    return { packetSize: 192, payloadOffset: 4 };
+  }
+  if (buffer[offset] !== 0x47) {
+    return null;
+  }
+  if (remaining === 204) {
+    return { packetSize: 204, payloadOffset: 0 };
+  }
+  if (remaining === 188) {
+    return { packetSize: 188, payloadOffset: 0 };
+  }
+
+  const next188 = hasMpegTsPacketStart(buffer, offset + 188);
+  const next204 = hasMpegTsPacketStart(buffer, offset + 204);
+  if (next204 && !next188) {
+    return { packetSize: 204, payloadOffset: 0 };
+  }
+  return { packetSize: 188, payloadOffset: 0 };
+}
+
+function hasMpegTsPacketStart(buffer: Buffer, offset: number): boolean {
+  if (offset >= buffer.length) {
+    return false;
+  }
+  return buffer[offset] === 0x47 || buffer[offset + 4] === 0x47;
 }
 
 function mediaArtifactSortKey(filePath: string): string {
