@@ -549,9 +549,8 @@ export async function detectLanguage(query: string): Promise<string> {
   return typeof body.language === 'string' && body.language ? body.language : 'und';
 }
 
-async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<string[]> {
+export async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<string[]> {
   const dir = downloadDir(config, row.id);
-  const expectedPath = fileMediaPath(config, row);
   let entries: string[];
   try {
     entries = await fsp.readdir(dir);
@@ -565,7 +564,7 @@ async function downloadedMediaCandidates(config: Config, row: FileRow): Promise<
   return entries
     .filter((entry) => /\.(mkv|mp4|ts)$/i.test(entry))
     .map((entry) => path.join(dir, entry))
-    .filter((entry) => entry !== expectedPath && !/\.muxing\.mkv$/i.test(entry))
+    .filter((entry) => !/\.muxing\.mkv$/i.test(entry))
     .sort((left, right) => mediaArtifactSortKey(left).localeCompare(mediaArtifactSortKey(right)));
 }
 

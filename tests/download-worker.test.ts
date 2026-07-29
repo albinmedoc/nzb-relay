@@ -7,6 +7,7 @@ import {
   buildFfmpegDownloadMuxArgs,
   buildFfmpegSubtitleMuxArgs,
   buildSvtplayDownloadArgs,
+  downloadedMediaCandidates,
   normalizeCodecName,
   normalizeMpegTsPackets,
   parseFfprobeCodecs,
@@ -168,6 +169,20 @@ describe('download worker', () => {
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.en.vtt')).toBe('und');
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.se.srt')).toBe('und');
     expect(subtitleLanguageFromPath('/data/downloads/file-1/Title.svtplay.unknown.srt')).toBe('und');
+  });
+
+  it('accepts svtplay-dl media when it already uses the final mkv filename', async () => {
+    const row = {
+      id: 'file-1',
+      filename: 'Rattatouille.1080p.-HAVSORN.mkv'
+    } as FileRow;
+    const dir = downloadDir(config, row.id);
+    const mediaPath = path.join(dir, row.filename);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(mediaPath, 'media');
+    await fs.writeFile(path.join(dir, 'Rattatouille.1080p.-HAVSORN.muxing.mkv'), 'partial');
+
+    expect(await downloadedMediaCandidates(config, row)).toEqual([mediaPath]);
   });
 
   it('parses and normalizes ffprobe codec names', () => {
