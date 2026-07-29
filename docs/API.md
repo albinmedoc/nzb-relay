@@ -74,6 +74,68 @@ Status codes:
 - `404` series not found
 - `502` SVT discovery fetch or parse failed
 
+## Movies
+
+Movies are one-shot jobs. They create a normal download immediately, then automatically queue one NZB after that download completes. Movie jobs do not create watchlist sources or episodes, and downloaded movie files are kept after NZB posting.
+
+### `POST /v1/movies`
+
+Queues a movie download and automatic NZB posting.
+
+Request:
+
+```json
+{
+  "url": "https://www.svtplay.se/video/...",
+  "title": "Movie Title",
+  "service": "svtplay",
+  "quality": "1080"
+}
+```
+
+Response:
+
+```json
+{
+  "movieId": "uuid",
+  "fileId": "uuid",
+  "status": "download_queued"
+}
+```
+
+Status codes:
+
+- `202` queued
+- `400 invalid_json`
+- `400 missing_required_param`
+- `400 malformed_url`
+- `400 malformed_quality`
+- `409 duplicate_url`
+
+### `GET /v1/movies`
+
+Lists movie jobs, newest first.
+
+Query parameters:
+
+- `limit`, default `20`, max `100`
+- `offset`, default `0`
+- `status`: `download_queued`, `download_failed`, `download_completed`, `nzb_queued`, `nzb_failed`, `posted`, or `blocked`
+- `createdAfter`
+- `createdBefore`
+
+### `GET /v1/movies/:movieId`
+
+Returns a single movie job.
+
+### `POST /v1/movies/:movieId/retry`
+
+Retries a failed movie job. Download failures get a fresh download row. NZB failures reuse the completed movie file and queue a fresh NZB attempt.
+
+### `DELETE /v1/movies/:movieId`
+
+Deletes movie metadata. Linked file and NZB jobs remain visible in their respective job lists.
+
 ## Watchlist
 
 The watchlist is provider-neutral, but currently only SVT Play series URLs are supported.

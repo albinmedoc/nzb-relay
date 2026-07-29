@@ -61,6 +61,7 @@ button.danger:hover:not(:disabled) {
 }
 
 input[type='url'],
+input[type='text'],
 input[type='date'],
 input[type='search'],
 select {
@@ -191,6 +192,23 @@ h2 {
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.movie-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 1fr) minmax(120px, 0.6fr) minmax(96px, 0.4fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.movie-form label {
+  display: grid;
+  gap: 5px;
+  color: #526173;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .table-toolbar {
@@ -461,6 +479,7 @@ pre {
   }
 
   .watch-form,
+  .movie-form,
   .summary-grid,
   .detail-grid {
     grid-template-columns: 1fr;

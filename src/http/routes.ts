@@ -9,17 +9,22 @@ import { z } from 'zod';
 import {
   createDownloadRequestSchema,
   createFileArchiveRequestSchema,
+  createMovieRequestSchema,
   createNzbArchiveRequestSchema,
   createNzbRequestSchema,
   createWatchlistSourceRequestSchema,
   jobStatusSchema,
+  movieStatusSchema,
   updateWatchlistSourceRequestSchema,
   type CreateDownloadResponse,
+  type CreateMovieResponse,
   type CreateNzbResponse,
   type FileJobResponse,
   type HealthResponse,
+  type MovieJobResponse,
   type NzbJobResponse,
   type RetryFileResponse,
+  type RetryMovieResponse,
   type RetryNzbResponse,
   type RetryWatchlistSourceResponse,
   type WatchlistEpisodeResponse,
@@ -48,6 +53,15 @@ import {
 } from '../db/repository.js';
 import type { JobListFilters } from '../db/repository.js';
 import {
+  deleteMovieJob,
+  getMovieJob,
+  insertMovieWithDownload,
+  listMovieJobs,
+  markMovieNzbRetryReady,
+  queueMovieDownloadRetry
+} from '../db/movie-repository.js';
+import type { MovieListFilters } from '../db/movie-repository.js';
+import {
   deleteWatchlistSource,
   getWatchlistSource,
   insertWatchlistSource,
@@ -56,7 +70,7 @@ import {
   retryFailedWatchlistEpisodesForSource,
   updateWatchlistSource
 } from '../db/watchlist-repository.js';
-import type { FileRow, JobStatus, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
+import type { FileRow, JobStatus, MovieJobRow, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
 import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
 import { removeDownloadDirectory, removeDownloadPartialsKeepLog, removeNzbArtifacts, removeNzbWorkDir } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
@@ -161,6 +175,106 @@ export function createApp({
       logger.error({ error }, 'failed to create download');
       return errorResponse(c, 500, 'internal_error', 'failed to create download');
     }
+  });
+
+  v1.post('/movies', async (c) => {
+    const body = await readJsonObject(c);
+    if (!body.ok) {
+      return errorResponse(c, 400, 'invalid_json', 'invalid JSON body');
+    }
+
+    const validation = validateMovieBody(body.value);
+    if (!validation.ok) {
+      return errorResponse(c, 400, validation.code, validation.error);
+    }
+
+    if (hasActiveUrl(db, validation.value.url)) {
+      return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+    }
+
+    try {
+      const row = insertMovieWithDownload(db, config, validation.value);
+      const file = row.fileId ? getFile(db, row.fileId) : null;
+      if (file) {
+        await ensureFileLog(config, file);
+      }
+      return c.json({ movieId: row.id, fileId: row.fileId!, status: row.status } satisfies CreateMovieResponse, 202);
+    } catch (error) {
+      if (isSqliteUniqueConstraint(error)) {
+        return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+      }
+      logger.error({ error }, 'failed to create movie');
+      return errorResponse(c, 500, 'internal_error', 'failed to create movie');
+    }
+  });
+
+  v1.get('/movies', (c) => {
+    const params = parseMovieListParams(c);
+    if (!params.ok) {
+      return errorResponse(c, 400, params.code, params.error);
+    }
+    const { limit, offset, filters } = params.value;
+    const result = listMovieJobs(db, limit, offset, filters);
+    return c.json({
+      items: result.items.map(serializeMovie),
+      total: result.total,
+      limit,
+      offset
+    });
+  });
+
+  v1.get('/movies/:movieId', (c) => {
+    const row = getMovieJob(db, c.req.param('movieId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'movie job not found');
+    }
+    return c.json(serializeMovie(row));
+  });
+
+  v1.post('/movies/:movieId/retry', async (c) => {
+    const row = getMovieJob(db, c.req.param('movieId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'movie job not found');
+    }
+    if (!['download_failed', 'nzb_failed', 'blocked'].includes(row.status)) {
+      return errorResponse(c, 409, 'movie_not_failed', 'movie job is not failed');
+    }
+
+    const file = row.fileId ? getFile(db, row.fileId) : null;
+    if (row.status === 'nzb_failed' || (row.status === 'blocked' && file?.status === 'completed' && !file.deleted)) {
+      if (!file || file.deleted || file.status !== 'completed') {
+        return errorResponse(c, 409, 'file_not_postable', 'movie download file is not postable');
+      }
+      if (row.nzbId) {
+        const nzb = getNzb(db, row.nzbId);
+        if (nzb) {
+          deleteNzb(db, nzb.id);
+          await removeNzbArtifacts(config, nzb);
+        }
+      }
+      markMovieNzbRetryReady(db, row.id);
+      const updated = getMovieJob(db, row.id)!;
+      return c.json({ movieId: updated.id, fileId: updated.fileId, nzbId: updated.nzbId, status: updated.status } satisfies RetryMovieResponse, 202);
+    }
+
+    if (hasActiveUrl(db, row.url)) {
+      return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+    }
+
+    const retryFileRow = queueMovieDownloadRetry(db, config, row);
+    await ensureFileLog(config, retryFileRow);
+    const updated = getMovieJob(db, row.id)!;
+    return c.json({ movieId: updated.id, fileId: updated.fileId, nzbId: updated.nzbId, status: updated.status } satisfies RetryMovieResponse, 202);
+  });
+
+  v1.delete('/movies/:movieId', async (c) => {
+    const row = getMovieJob(db, c.req.param('movieId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'movie job not found');
+    }
+
+    deleteMovieJob(db, row.id);
+    return c.body(null, 204);
   });
 
   v1.post('/watchlist', async (c) => {
@@ -587,6 +701,29 @@ function serializeNzb(db: AppDatabase, row: NzbRow): NzbJobResponse {
   };
 }
 
+function serializeMovie(row: MovieJobRow): MovieJobResponse {
+  return {
+    id: row.id,
+    url: row.url,
+    title: row.title,
+    service: row.service,
+    quality: row.quality,
+    status: row.status,
+    fileId: row.fileId,
+    nzbId: row.nzbId,
+    downloadAttempts: row.downloadAttempts,
+    nzbAttempts: row.nzbAttempts,
+    downloadQueuedAt: row.downloadQueuedAt,
+    downloadedAt: row.downloadedAt,
+    nzbQueuedAt: row.nzbQueuedAt,
+    postedAt: row.postedAt,
+    lastErrorCode: row.status === 'download_failed' || row.status === 'nzb_failed' || row.status === 'blocked' ? row.lastErrorCode : null,
+    lastError: row.status === 'download_failed' || row.status === 'nzb_failed' || row.status === 'blocked' ? row.lastError : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 function serializeWatchlistSource(row: WatchlistSourceRow): WatchlistSourceResponse {
   return {
     id: row.id,
@@ -711,6 +848,41 @@ function validateDownloadBody(body: Record<string, unknown>):
       quality: required.data.quality,
       season,
       episode
+    }
+  };
+}
+
+function validateMovieBody(body: Record<string, unknown>):
+  | {
+      ok: true;
+      value: {
+        url: string;
+        title: string;
+        service: string;
+        quality: string;
+      };
+    }
+  | { ok: false; code: string; error: string } {
+  const validation = createMovieRequestSchema.safeParse(body);
+  if (!validation.success) {
+    return { ok: false, code: 'missing_required_param', error: 'missing required parameter' };
+  }
+  try {
+    new URL(validation.data.url);
+  } catch {
+    return { ok: false, code: 'malformed_url', error: 'url is malformed' };
+  }
+  if (!/^\d{3,4}$/.test(validation.data.quality)) {
+    return { ok: false, code: 'malformed_quality', error: 'quality is malformed' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      url: validation.data.url,
+      title: validation.data.title,
+      service: validation.data.service,
+      quality: validation.data.quality
     }
   };
 }
@@ -940,6 +1112,46 @@ function parseListParams(c: Context):
       return { ok: false, code: 'invalid_include_deleted', error: 'includeDeleted must be true or false' };
     }
     filters.includeDeleted = value === 'true';
+  }
+
+  return { ok: true, value: { limit, offset, filters } };
+}
+
+function parseMovieListParams(c: Context):
+  | { ok: true; value: { limit: number; offset: number; filters: MovieListFilters } }
+  | { ok: false; code: string; error: string } {
+  const { limit, offset } = parsePagination(c);
+  const status = c.req.query('status');
+  const createdAfter = c.req.query('createdAfter');
+  const createdBefore = c.req.query('createdBefore');
+  const filters: MovieListFilters = {};
+
+  if (status != null) {
+    const statusValidation = movieStatusSchema.safeParse(status);
+    if (!statusValidation.success) {
+      return { ok: false, code: 'invalid_status', error: 'status is not a valid movie status' };
+    }
+    filters.status = statusValidation.data;
+  }
+
+  if (createdAfter != null) {
+    const createdAfterValidation = parseDateQuery(createdAfter);
+    if (!createdAfterValidation.ok) {
+      return { ok: false, code: 'invalid_created_after', error: 'createdAfter must be a valid datetime' };
+    }
+    filters.createdAfter = createdAfterValidation.value;
+  }
+
+  if (createdBefore != null) {
+    const createdBeforeValidation = parseDateQuery(createdBefore);
+    if (!createdBeforeValidation.ok) {
+      return { ok: false, code: 'invalid_created_before', error: 'createdBefore must be a valid datetime' };
+    }
+    filters.createdBefore = createdBeforeValidation.value;
+  }
+
+  if (filters.createdAfter && filters.createdBefore && filters.createdAfter > filters.createdBefore) {
+    return { ok: false, code: 'invalid_created_range', error: 'createdAfter must be before or equal to createdBefore' };
   }
 
   return { ok: true, value: { limit, offset, filters } };

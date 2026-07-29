@@ -19,6 +19,17 @@ export const watchlistEpisodeStatusSchema = z.enum([
 ]);
 export type WatchlistEpisodeStatus = z.infer<typeof watchlistEpisodeStatusSchema>;
 
+export const movieStatusSchema = z.enum([
+  'download_queued',
+  'download_failed',
+  'download_completed',
+  'nzb_queued',
+  'nzb_failed',
+  'posted',
+  'blocked'
+]);
+export type MovieStatus = z.infer<typeof movieStatusSchema>;
+
 export const createDownloadRequestSchema = z
   .object({
     url: z.string().trim().min(1),
@@ -30,6 +41,16 @@ export const createDownloadRequestSchema = z
   })
   .passthrough();
 export type CreateDownloadRequest = z.infer<typeof createDownloadRequestSchema>;
+
+export const createMovieRequestSchema = z
+  .object({
+    url: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    service: z.string().trim().min(1),
+    quality: z.string().trim().min(1)
+  })
+  .passthrough();
+export type CreateMovieRequest = z.infer<typeof createMovieRequestSchema>;
 
 export const createWatchlistSourceRequestSchema = z
   .object({
@@ -110,6 +131,12 @@ export interface CreateDownloadResponse {
   status: JobStatus;
 }
 
+export interface CreateMovieResponse {
+  movieId: string;
+  fileId: string;
+  status: MovieStatus;
+}
+
 export interface RetryFileResponse {
   fileId: string;
   status: JobStatus;
@@ -162,6 +189,34 @@ export interface NzbJobResponse {
     lastError: string | null;
     uploadedAt: string | null;
   }>;
+}
+
+export interface MovieJobResponse {
+  id: string;
+  url: string;
+  title: string;
+  service: string;
+  quality: string;
+  status: MovieStatus;
+  fileId: string | null;
+  nzbId: string | null;
+  downloadAttempts: number;
+  nzbAttempts: number;
+  downloadQueuedAt: string | null;
+  downloadedAt: string | null;
+  nzbQueuedAt: string | null;
+  postedAt: string | null;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RetryMovieResponse {
+  movieId: string;
+  fileId: string | null;
+  nzbId: string | null;
+  status: MovieStatus;
 }
 
 export interface WatchlistSourceResponse {

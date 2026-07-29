@@ -82,6 +82,36 @@ export const indexerUpload = sqliteTable(
   })
 );
 
+export const movieJob = sqliteTable(
+  'movie_job',
+  {
+    id: text('id').primaryKey(),
+    url: text('url').notNull(),
+    title: text('title').notNull(),
+    service: text('service').notNull(),
+    quality: text('quality').notNull(),
+    status: text('status').notNull(),
+    fileId: text('fileId').references(() => file.id, { onDelete: 'set null' }),
+    nzbId: text('nzbId').references(() => nzb.id, { onDelete: 'set null' }),
+    downloadAttempts: integer('downloadAttempts').notNull().default(0),
+    nzbAttempts: integer('nzbAttempts').notNull().default(0),
+    downloadQueuedAt: text('downloadQueuedAt'),
+    downloadedAt: text('downloadedAt'),
+    nzbQueuedAt: text('nzbQueuedAt'),
+    postedAt: text('postedAt'),
+    lastErrorCode: text('lastErrorCode'),
+    lastError: text('lastError'),
+    createdAt: text('createdAt').notNull(),
+    updatedAt: text('updatedAt').notNull()
+  },
+  (table) => ({
+    statusIdx: index('movie_job_status_idx').on(table.status),
+    fileIdIdx: index('movie_job_file_id_idx').on(table.fileId),
+    nzbIdIdx: index('movie_job_nzb_id_idx').on(table.nzbId),
+    createdAtIdx: index('movie_job_created_at_idx').on(table.createdAt)
+  })
+);
+
 export const webhookDeliveries = sqliteTable(
   'webhook_deliveries',
   {

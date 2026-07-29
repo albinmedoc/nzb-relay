@@ -1,5 +1,6 @@
 import { apiBase, backendToken } from './runtime';
 import type {
+  CreateMovieRequest,
   CreateWatchlistSourceRequest,
   FileListParams,
   FileJob,
@@ -7,6 +8,7 @@ import type {
   JobListParams,
   ListParams,
   ListResponse,
+  MovieJob,
   NzbJob,
   UpdateWatchlistSourceRequest,
   WatchlistSource,
@@ -55,6 +57,26 @@ export function createWatchlistSource(input: CreateWatchlistSourceRequest): Prom
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input)
   });
+}
+
+export function createMovie(input: CreateMovieRequest): Promise<{ movieId: string; fileId: string; status: string }> {
+  return requestJson('/movies', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input)
+  });
+}
+
+export function listMovies(params: Record<string, string | number | boolean | null | undefined> = {}): Promise<ListResponse<MovieJob>> {
+  return requestJson<ListResponse<MovieJob>>(`/movies${toQuery({ limit: 20, ...params })}`);
+}
+
+export function retryMovie(movieId: string): Promise<unknown> {
+  return requestJson(`/movies/${movieId}/retry`, { method: 'POST' });
+}
+
+export async function deleteMovie(movieId: string): Promise<void> {
+  await ensureOk(await request(`/movies/${movieId}`, { method: 'DELETE' }));
 }
 
 export function updateWatchlistSource(

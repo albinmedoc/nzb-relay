@@ -1,6 +1,6 @@
-import type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType } from '@nzb-relay/shared';
+import type { JobStatus, MovieStatus, WatchlistEpisodeStatus, WatchlistSourceType } from '@nzb-relay/shared';
 
-export type { JobStatus, WatchlistEpisodeStatus, WatchlistSourceType };
+export type { JobStatus, MovieStatus, WatchlistEpisodeStatus, WatchlistSourceType };
 export type WebhookStatus = 'pending' | 'delivered' | 'failed';
 export type IndexerUploadStatus = 'pending' | 'completed' | 'failed';
 
@@ -68,6 +68,27 @@ export interface IndexerUploadRow {
   createdAt: string;
   updatedAt: string;
   uploadedAt: string | null;
+}
+
+export interface MovieJobRow {
+  id: string;
+  url: string;
+  title: string;
+  service: string;
+  quality: string;
+  status: MovieStatus;
+  fileId: string | null;
+  nzbId: string | null;
+  downloadAttempts: number;
+  nzbAttempts: number;
+  downloadQueuedAt: string | null;
+  downloadedAt: string | null;
+  nzbQueuedAt: string | null;
+  postedAt: string | null;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WatchlistSourceRow {

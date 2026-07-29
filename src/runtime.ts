@@ -7,6 +7,7 @@ import { createLogger } from './logger.js';
 import { recoverInterruptedJobs } from './recovery.js';
 import { createApp } from './http/routes.js';
 import { DownloadWorker } from './workers/download-worker.js';
+import { MovieWorker } from './workers/movie-worker.js';
 import { NzbWorker } from './workers/nzb-worker.js';
 import { WatchlistWorker } from './workers/watchlist-worker.js';
 import { WebhookDispatcher } from './workers/webhook-dispatcher.js';
@@ -19,6 +20,7 @@ export interface Runtime {
   app: ReturnType<typeof createApp>;
   workers: {
     downloads: DownloadWorker;
+    movies: MovieWorker;
     nzb: NzbWorker;
     watchlist: WatchlistWorker;
     webhooks: WebhookDispatcher;
@@ -51,6 +53,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await recoverInterruptedJobs(db, config, logger);
 
     const downloads = new DownloadWorker(db, config, logger);
+    const movies = new MovieWorker(db, config, logger);
     const nzb = new NzbWorker(db, config, logger);
     const watchlist = new WatchlistWorker(db, config, logger);
     const webhooks = new WebhookDispatcher(db, config, logger);
@@ -67,6 +70,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
     if (options.startWorkers !== false) {
       downloads.start();
+      movies.start();
       nzb.start();
       watchlist.start();
       webhooks.start();
@@ -82,6 +86,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       app,
       workers: {
         downloads,
+        movies,
         nzb,
         watchlist,
         webhooks,
@@ -97,7 +102,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       async stop() {
         await closeServer(server);
-        await Promise.all([downloads.stop(), nzb.stop(), watchlist.stop(), webhooks.stop(), indexerUploads.stop()]);
+        await Promise.all([downloads.stop(), movies.stop(), nzb.stop(), watchlist.stop(), webhooks.stop(), indexerUploads.stop()]);
         db.close();
         await releaseLock?.();
       }

@@ -1,5 +1,6 @@
 export type {
   CreateWatchlistSourceRequest,
+  CreateMovieRequest,
   FileListParams,
   FileJobResponse as FileJob,
   HealthResponse as Health,
@@ -7,6 +8,8 @@ export type {
   JobStatus,
   ListParams,
   ListResponse,
+  MovieJobResponse as MovieJob,
+  MovieStatus,
   NzbJobResponse as NzbJob,
   UpdateWatchlistSourceRequest,
   WatchlistEpisodeResponse as WatchlistEpisode,
