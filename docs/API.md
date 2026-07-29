@@ -77,6 +77,7 @@ Status codes:
 ## Movies
 
 Movies are one-shot jobs. They create a normal download immediately, then automatically queue one NZB after that download completes. Movie jobs do not create watchlist sources or episodes, and downloaded movie files are kept after NZB posting.
+Movie creation only accepts an SVT Play video URL; the server parses the title and picks the best available quality.
 
 ### `POST /v1/movies`
 
@@ -86,10 +87,7 @@ Request:
 
 ```json
 {
-  "url": "https://www.svtplay.se/video/...",
-  "title": "Movie Title",
-  "service": "svtplay",
-  "quality": "1080"
+  "url": "https://www.svtplay.se/video/..."
 }
 ```
 
@@ -109,7 +107,8 @@ Status codes:
 - `400 invalid_json`
 - `400 missing_required_param`
 - `400 malformed_url`
-- `400 malformed_quality`
+- `400 unsupported_movie_url`
+- `502 movie_discovery_failed`
 - `409 duplicate_url`
 
 ### `GET /v1/movies`

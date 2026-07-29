@@ -19,7 +19,16 @@ beforeEach(async () => {
     API_KEY: 'secret'
   });
   db = createTestDb(config);
-  app = createTestApp(db, config);
+  app = createTestApp(db, config, undefined, {
+    async fetchMovie(url) {
+      return {
+        url,
+        title: 'Movie Title',
+        service: 'svtplay',
+        quality: '2160'
+      };
+    }
+  });
 });
 
 afterEach(async () => {
@@ -35,10 +44,7 @@ describe('movie API', () => {
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        url: 'https://example.test/movie',
-        title: 'Movie Title',
-        service: 'svtplay',
-        quality: '1080'
+        url: 'https://www.svtplay.se/video/movie/test'
       })
     });
 
@@ -51,7 +57,7 @@ describe('movie API', () => {
     });
 
     expect(getMovieJob(db, body.movieId)).toMatchObject({
-      url: 'https://example.test/movie',
+      url: 'https://www.svtplay.se/video/movie/test',
       title: 'Movie Title',
       status: 'download_queued',
       fileId: body.fileId,
@@ -59,9 +65,10 @@ describe('movie API', () => {
       nzbAttempts: 0
     });
     expect(getFile(db, body.fileId)).toMatchObject({
-      url: 'https://example.test/movie',
+      url: 'https://www.svtplay.se/video/movie/test',
       title: 'Movie Title',
       filename: 'Movie.Title.svtplay.mkv',
+      quality: '2160',
       season: null,
       episode: null
     });
@@ -70,16 +77,32 @@ describe('movie API', () => {
   });
 
   it('rejects duplicate active movie URLs', async () => {
-    await createMovie('https://example.test/duplicate');
+    await createMovie('https://www.svtplay.se/video/duplicate');
 
-    const duplicate = await createMovie('https://example.test/duplicate');
+    const duplicate = await createMovie('https://www.svtplay.se/video/duplicate');
 
     expect(duplicate.status).toBe(409);
     expect(await duplicate.json()).toMatchObject({ code: 'duplicate_url' });
   });
 
+  it('rejects unsupported movie URLs', async () => {
+    const response = await app.request('/v1/movies', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer secret',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: 'https://example.test/movie'
+      })
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: 'unsupported_movie_url' });
+  });
+
   it('retries a failed movie download with a fresh file row', async () => {
-    const created = await createMovie('https://example.test/retry');
+    const created = await createMovie('https://www.svtplay.se/video/retry');
     const body = (await created.json()) as { movieId: string; fileId: string };
     db.prepare("UPDATE file SET status = 'failed', errorCode = 'unknown', error = 'failed' WHERE id = ?").run(body.fileId);
 
@@ -109,7 +132,7 @@ describe('movie API', () => {
 
 describe('movie worker', () => {
   it('queues an NZB after movie download completion and marks the movie posted when the NZB completes', async () => {
-    const created = await createMovie('https://example.test/worker');
+    const created = await createMovie('https://www.svtplay.se/video/worker');
     const body = (await created.json()) as { movieId: string; fileId: string };
     const file = getFile(db, body.fileId)!;
     await writeMediaFile(file);
@@ -157,10 +180,7 @@ function createMovie(url: string): Promise<Response> {
       'content-type': 'application/json'
     },
     body: JSON.stringify({
-      url,
-      title: 'Movie Title',
-      service: 'svtplay',
-      quality: '1080'
+      url
     })
   });
 }

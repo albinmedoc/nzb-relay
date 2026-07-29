@@ -17,10 +17,7 @@ const loading = ref(false);
 const movies = ref<MovieJob[]>([]);
 const total = ref(0);
 const form = ref({
-  url: '',
-  title: '',
-  service: 'svtplay',
-  quality: '1080'
+  url: ''
 });
 const status = ref<'all' | MovieStatus>('all');
 const createdAfter = ref('');
@@ -49,14 +46,8 @@ watch([limit, offset], () => {
 
 async function submitMovie() {
   await runAction(async () => {
-    await createMovie({
-      url: form.value.url,
-      title: form.value.title,
-      service: form.value.service,
-      quality: form.value.quality
-    });
+    await createMovie({ url: form.value.url });
     form.value.url = '';
-    form.value.title = '';
     reset();
     clearSelection();
     await load(false);
@@ -166,18 +157,6 @@ onMounted(load);
       <label>
         URL
         <input v-model="form.url" required type="url" placeholder="https://www.svtplay.se/video/..." />
-      </label>
-      <label>
-        Title
-        <input v-model="form.title" required type="text" placeholder="Movie title" />
-      </label>
-      <label>
-        Service
-        <input v-model="form.service" required type="text" />
-      </label>
-      <label>
-        Quality
-        <input v-model="form.quality" required inputmode="numeric" pattern="\d{3,4}" type="text" />
       </label>
       <button type="submit" :disabled="loading">Queue movie</button>
     </form>

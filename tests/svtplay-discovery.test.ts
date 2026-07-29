@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSvtSeriePageHtml, parseSvtSerieXml, parseSvtplayDlQualities } from '../src/discovery/svtplay.js';
+import { parseSvtMoviePageHtml, parseSvtSeriePageHtml, parseSvtSerieXml, parseSvtplayDlQualities } from '../src/discovery/svtplay.js';
 
 describe('svtplay discovery', () => {
   it('reads seasons and episodes from SVT page data', async () => {
@@ -226,6 +226,21 @@ describe('svtplay discovery', () => {
     ]);
   });
 
+  it('parses movie titles from SVT page data and selects the highest quality', async () => {
+    const result = await parseSvtMoviePageHtml(
+      moviePageData('https://www.svtplay.se/video/movie/test', 'My Movie'),
+      'https://www.svtplay.se/video/movie/test?foo=bar',
+      async () => ['1080', '720']
+    );
+
+    expect(result).toEqual({
+      url: 'https://www.svtplay.se/video/movie/test',
+      title: 'My Movie',
+      service: 'svtplay',
+      quality: '1080'
+    });
+  });
+
   it('parses resolution heights from svtplay-dl quality output', () => {
     expect(
       parseSvtplayDlQualities(`
@@ -326,6 +341,38 @@ function pageData(link: string, modules: TestPageModule[]): string {
             }
           },
           modules
+        }
+      })
+    }
+  };
+
+  return `<html><script>URQL_DATA = ${JSON.stringify(urqlData)};</script></html>`;
+}
+
+function moviePageData(link: string, title: string): string {
+  const urqlData = {
+    cache: {
+      hasNext: false,
+      data: JSON.stringify({
+        detailsPageByPath: {
+          item: {
+            name: title,
+            parent: {
+              name: 'Not the title'
+            },
+            urls: {
+              svtplay: link
+            }
+          },
+          details: {
+            heading: title
+          },
+          analytics: {
+            json: {
+              title
+            }
+          },
+          modules: []
         }
       })
     }

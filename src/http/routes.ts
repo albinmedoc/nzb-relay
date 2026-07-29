@@ -71,7 +71,15 @@ import {
   updateWatchlistSource
 } from '../db/watchlist-repository.js';
 import type { FileRow, JobStatus, MovieJobRow, NzbRow, WatchlistEpisodeRow, WatchlistSourceRow, WatchlistSourceSummary } from '../types.js';
-import { fetchSvtSerie, type SvtSerieFetchOptions, type SvtSerieResponse } from '../discovery/svtplay.js';
+import {
+  fetchSvtMovie,
+  fetchSvtSerie,
+  normalizeSvtMovieUrl,
+  type SvtMovieFetchOptions,
+  type SvtMovieResponse,
+  type SvtSerieFetchOptions,
+  type SvtSerieResponse
+} from '../discovery/svtplay.js';
 import { removeDownloadDirectory, removeDownloadPartialsKeepLog, removeNzbArtifacts, removeNzbWorkDir } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, nzbFinalPath, nzbLogPath } from '../utils/paths.js';
 import {
@@ -93,7 +101,8 @@ export interface WorkerControllers {
 }
 
 export interface SvtDiscovery {
-  fetchSerie(slug: string, options?: SvtSerieFetchOptions): Promise<SvtSerieResponse | null>;
+  fetchSerie?(slug: string, options?: SvtSerieFetchOptions): Promise<SvtSerieResponse | null>;
+  fetchMovie?(url: string, options?: SvtMovieFetchOptions): Promise<SvtMovieResponse>;
 }
 
 interface CreateAppDeps {
@@ -110,7 +119,7 @@ export function createApp({
   config,
   logger,
   workers = {},
-  svtDiscovery = { fetchSerie: fetchSvtSerie },
+  svtDiscovery = {},
   watchProviders = defaultWatchProviders
 }: CreateAppDeps): Hono {
   const app = new Hono();
@@ -129,7 +138,8 @@ export function createApp({
     try {
       const populateQualities = c.req.query('qualities')?.toLowerCase() !== 'false';
       const fastQualities = populateQualities && c.req.query('fast')?.toLowerCase() === 'true';
-      const result = await svtDiscovery.fetchSerie(c.req.param('slug'), {
+      const fetchSerie = svtDiscovery.fetchSerie ?? fetchSvtSerie;
+      const result = await fetchSerie(c.req.param('slug'), {
         populateQualities,
         fastQualities,
         logger
@@ -188,23 +198,29 @@ export function createApp({
       return errorResponse(c, 400, validation.code, validation.error);
     }
 
-    if (hasActiveUrl(db, validation.value.url)) {
-      return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
-    }
+    const fetchMovie = svtDiscovery.fetchMovie ?? fetchSvtMovie;
 
     try {
-      const row = insertMovieWithDownload(db, config, validation.value);
+      const discovery = await fetchMovie(validation.value.url, { logger });
+      if (hasActiveUrl(db, discovery.url)) {
+        return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+      }
+
+      const row = insertMovieWithDownload(db, config, discovery);
       const file = row.fileId ? getFile(db, row.fileId) : null;
       if (file) {
         await ensureFileLog(config, file);
       }
       return c.json({ movieId: row.id, fileId: row.fileId!, status: row.status } satisfies CreateMovieResponse, 202);
     } catch (error) {
+      if (error instanceof Error && error.message === 'unsupported SVT Play movie URL') {
+        return errorResponse(c, 400, 'unsupported_movie_url', 'movie URL is not supported');
+      }
       if (isSqliteUniqueConstraint(error)) {
         return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
       }
-      logger.error({ error }, 'failed to create movie');
-      return errorResponse(c, 500, 'internal_error', 'failed to create movie');
+      logger.warn({ error }, 'failed to discover movie');
+      return errorResponse(c, 502, 'movie_discovery_failed', 'movie discovery failed');
     }
   });
 
@@ -857,9 +873,6 @@ function validateMovieBody(body: Record<string, unknown>):
       ok: true;
       value: {
         url: string;
-        title: string;
-        service: string;
-        quality: string;
       };
     }
   | { ok: false; code: string; error: string } {
@@ -872,17 +885,14 @@ function validateMovieBody(body: Record<string, unknown>):
   } catch {
     return { ok: false, code: 'malformed_url', error: 'url is malformed' };
   }
-  if (!/^\d{3,4}$/.test(validation.data.quality)) {
-    return { ok: false, code: 'malformed_quality', error: 'quality is malformed' };
+  if (!normalizeSvtMovieUrl(validation.data.url)) {
+    return { ok: false, code: 'unsupported_movie_url', error: 'movie URL is not supported' };
   }
 
   return {
     ok: true,
     value: {
-      url: validation.data.url,
-      title: validation.data.title,
-      service: validation.data.service,
-      quality: validation.data.quality
+      url: validation.data.url
     }
   };
 }

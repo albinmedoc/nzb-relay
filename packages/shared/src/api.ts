@@ -44,10 +44,7 @@ export type CreateDownloadRequest = z.infer<typeof createDownloadRequestSchema>;
 
 export const createMovieRequestSchema = z
   .object({
-    url: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    service: z.string().trim().min(1),
-    quality: z.string().trim().min(1)
+    url: z.string().trim().min(1)
   })
   .passthrough();
 export type CreateMovieRequest = z.infer<typeof createMovieRequestSchema>;

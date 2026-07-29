@@ -25,6 +25,13 @@ export interface SvtSerieResponse {
   }>;
 }
 
+export interface SvtMovieResponse {
+  url: string;
+  title: string;
+  service: 'svtplay';
+  quality: string;
+}
+
 type FeedOrder = 'asc' | 'desc';
 export type QualityProbe = (url: string) => Promise<string[]>;
 
@@ -33,6 +40,11 @@ export interface SvtSerieFetchOptions {
   fastQualities?: boolean;
   qualityProbe?: QualityProbe;
   qualityProbeConcurrency?: number;
+  logger?: Logger;
+}
+
+export interface SvtMovieFetchOptions {
+  qualityProbe?: QualityProbe;
   logger?: Logger;
 }
 
@@ -404,6 +416,28 @@ function extractPageSerieName(detailsPage: Record<string, unknown>): string {
   );
 }
 
+export function normalizeSvtMovieUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (host !== 'svtplay.se') {
+      return null;
+    }
+
+    const segments = url.pathname.split('/').filter(Boolean);
+    if (segments[0]?.toLowerCase() !== 'video' || segments.length < 2) {
+      return null;
+    }
+
+    url.protocol = 'https:';
+    url.hash = '';
+    url.search = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function extractRssSerieName(title: string): string {
   return title.replace(/^SVT Play\s*-\s*/i, '').trim();
 }
@@ -616,6 +650,80 @@ async function probeEpisodeQualities(
     );
     throw error;
   }
+}
+
+export async function fetchSvtMovie(url: string, options: SvtMovieFetchOptions = {}): Promise<SvtMovieResponse> {
+  const normalizedUrl = normalizeSvtMovieUrl(url);
+  if (!normalizedUrl) {
+    throw new Error('unsupported SVT Play movie URL');
+  }
+
+  const response = await fetch(normalizedUrl, {
+    signal: AbortSignal.timeout(30_000)
+  });
+  if (response.status === 404) {
+    throw new Error('SVT Play movie not found');
+  }
+  if (!response.ok) {
+    throw new Error(`SVT returned HTTP ${response.status}`);
+  }
+
+  const movieResult = await parseSvtMoviePageHtml(
+    await response.text(),
+    normalizedUrl,
+    options.qualityProbe ?? probeSvtplayDlQualities,
+    options.logger
+  );
+  if (!movieResult) {
+    throw new Error('SVT Play movie not found');
+  }
+  return movieResult;
+}
+
+export async function parseSvtMoviePageHtml(
+  html: string,
+  url: string,
+  qualityProbe: QualityProbe = probeSvtplayDlQualities,
+  logger?: Logger
+): Promise<SvtMovieResponse | null> {
+  const detailsPage = extractDetailsPage(html);
+  if (!detailsPage) {
+    return null;
+  }
+
+  const canonicalUrl =
+    normalizeSvtMovieUrl(absoluteSvtUrl(firstText(getPath(detailsPage, ['item', 'urls', 'svtplay']))) || url) || url;
+  const title =
+    firstText(
+      getPath(detailsPage, ['item', 'name']),
+      getPath(detailsPage, ['details', 'heading']),
+      getPath(detailsPage, ['analytics', 'json', 'title']),
+      getPath(detailsPage, ['item', 'parent', 'name'])
+    ) || humanizeSlug(canonicalUrl);
+
+  logger?.info({ event: 'svt.movie.discovery.started', url: canonicalUrl }, 'SVT movie discovery started');
+  const qualities = await qualityProbe(canonicalUrl);
+  const quality = qualities[0];
+  if (!quality) {
+    throw new Error(`svtplay-dl quality probe returned no qualities for ${canonicalUrl}`);
+  }
+
+  logger?.info(
+    {
+      event: 'svt.movie.discovery.completed',
+      url: canonicalUrl,
+      title,
+      quality
+    },
+    'SVT movie discovery completed'
+  );
+
+  return {
+    url: canonicalUrl,
+    title,
+    service: 'svtplay',
+    quality
+  };
 }
 
 function countEpisodes(response: SvtSerieResponse): number {
