@@ -80,10 +80,15 @@ export class NzbWorker {
       return false;
     }
     if (!claimNzb(this.db, pending.id)) {
+      this.logger.debug?.({ event: 'nzb.claim_skipped', nzbId: pending.id }, 'NZB claim skipped');
       return true;
     }
 
     const row = getNzbOrThrow(this.db, pending.id);
+    this.logger.debug?.(
+      { event: 'nzb.claimed', nzbId: row.id, releaseName: row.releaseName },
+      'NZB claimed'
+    );
     const controller = new AbortController();
     const done = this.execute(row, controller, () => this.active?.id === row.id && this.active.shutdownCancelled);
     this.active = { id: row.id, controller, done, child: null, shutdownCancelled: false };
@@ -105,12 +110,15 @@ export class NzbWorker {
     const logStream = fs.createWriteStream(nzbLogPath(this.config, row), { flags: 'a' });
 
     try {
+      this.logger.debug?.({ event: 'nzb.started', nzbId: row.id, releaseName: row.releaseName }, 'NZB processing started');
       assertUsenetConfigured(this.config);
       const files = canonicalFilesForNzb(this.db, row.id);
+      this.logger.debug?.({ event: 'nzb.files_loaded', nzbId: row.id, fileCount: files.length }, 'NZB files loaded');
       await this.preflightSpace(row, files, logStream);
 
       const password = crypto.randomBytes(16).toString('base64url');
       const stagedFiles = await this.stageSymlinks(row, files);
+      this.logger.debug?.({ event: 'nzb.files_staged', nzbId: row.id, fileCount: stagedFiles.length }, 'NZB files staged');
       const rarBase = path.join(workDir, `${row.releaseName}.rar`);
 
       await this.runStep(row, 'rar', [
@@ -125,14 +133,18 @@ export class NzbWorker {
       ], logStream, controller);
 
       const rarParts = await listMatching(workDir, row.releaseName, /(\.rar|\.r\d+)$/i);
+      this.logger.debug?.({ event: 'nzb.rar_parts_ready', nzbId: row.id, partCount: rarParts.length }, 'NZB rar parts ready');
       await this.runStep(row, 'parpar', buildParparArgs(workDir, row.releaseName, rarParts), logStream, controller);
 
       const postFiles = [
         ...(await listMatching(workDir, row.releaseName, /(\.rar|\.r\d+|\.par2)$/i))
       ];
+      this.logger.debug?.({ event: 'nzb.post_files_ready', nzbId: row.id, fileCount: postFiles.length }, 'NZB post files ready');
       await this.runStep(row, 'nyuu', buildNyuuArgs(this.config, row, password, postFiles), logStream, controller);
 
-      if (transitionNzbCompleted(this.db, this.config, row)) {
+      const completed = transitionNzbCompleted(this.db, this.config, row);
+      this.logger.debug?.({ event: 'nzb.completed', nzbId: row.id, transitioned: completed }, 'NZB completed');
+      if (completed) {
         try {
           enqueueIndexerUploads(this.db, this.config, getNzbOrThrow(this.db, row.id));
         } catch (error) {
@@ -147,11 +159,16 @@ export class NzbWorker {
       }
     } catch (error) {
       if (isTerminalSuppressed()) {
+        this.logger.debug?.({ event: 'nzb.terminal_suppressed', nzbId: row.id }, 'NZB terminal transition suppressed');
         return;
       }
       const { code, message } = classifyNzbError(error);
       try {
         const transitioned = transitionNzbFailed(this.db, this.config, row, code, message);
+        this.logger.debug?.(
+          { event: 'nzb.failed', nzbId: row.id, errorCode: code, error: message, transitioned },
+          'NZB failed'
+        );
         if (transitioned && code !== 'insufficient_space') {
           await removeNzbWorkDir(this.config, row);
         }
@@ -173,6 +190,10 @@ export class NzbWorker {
     const statfs = await fsp.statfs(this.config.dataDir);
     const available = statfs.bavail * statfs.bsize;
     const required = Math.ceil(total * this.config.stagingMultiplier);
+    this.logger.debug?.(
+      { event: 'nzb.space_checked', nzbId: row.id, inputBytes: total, requiredBytes: required, availableBytes: available },
+      'NZB staging space checked'
+    );
     if (available < required) {
       const message = `insufficient_space: need ${required} bytes, have ${available} bytes`;
       logStream.write(`${message}\n`);
@@ -202,6 +223,7 @@ export class NzbWorker {
     controller: AbortController
   ): Promise<void> {
     logStream.write(`starting ${command}\n`);
+    this.logger.debug?.({ event: 'nzb.step.started', nzbId: row.id, command }, 'NZB step started');
     const result = await runLoggedProcess({
       command,
       args,
@@ -216,8 +238,13 @@ export class NzbWorker {
     });
 
     if (result.code !== 0) {
+      this.logger.debug?.(
+        { event: 'nzb.step.failed', nzbId: row.id, command, code: result.code, signal: result.signal },
+        'NZB step failed'
+      );
       throw new NzbPipelineError('child_exit_nonzero', childFailureSummary(command, result));
     }
+    this.logger.debug?.({ event: 'nzb.step.completed', nzbId: row.id, command }, 'NZB step completed');
   }
 }
 

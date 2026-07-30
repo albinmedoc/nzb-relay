@@ -34,6 +34,10 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
     };
 
     try {
+      options.logger.debug?.(
+        { event: 'child.started', command: options.command, cwd: options.cwd },
+        'child process started'
+      );
       child = spawn(options.command, options.args, {
         cwd: options.cwd,
         stdio: ['ignore', 'pipe', 'pipe']
@@ -79,9 +83,11 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
       if (child.killed) {
         return;
       }
+      options.logger.debug?.({ event: 'child.terminate', command: options.command }, 'terminating child process');
       child.kill('SIGTERM');
       killTimer = setTimeout(() => {
         if (!child.killed) {
+          options.logger.debug?.({ event: 'child.kill', command: options.command }, 'killing child process');
           child.kill('SIGKILL');
         }
       }, 1000);
@@ -94,7 +100,7 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
     }
 
     child.on('error', (error) => {
-      options.logger.debug({ error, command: options.command }, 'child process spawn error');
+      options.logger.debug?.({ event: 'child.spawn_error', error, command: options.command }, 'child process spawn error');
       settle({
         code: null,
         signal: null,
@@ -107,6 +113,10 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
     child.on('close', (code, signal) => {
       stdout.close();
       stderr.close();
+      options.logger.debug?.(
+        { event: 'child.exited', command: options.command, code, signal },
+        'child process exited'
+      );
       settle({
         code,
         signal,
@@ -130,6 +140,17 @@ export function childFailureSummary(tool: string, result: ChildProcessResult): s
 
 export function truncateOneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 200) || 'unknown error';
+}
+
+export function commandLine(command: string, args: string[]): string {
+  return [command, ...args].map(shellQuote).join(' ');
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function isEnospc(error: unknown): boolean {

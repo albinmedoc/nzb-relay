@@ -15,7 +15,7 @@ import {
   transitionFileFailed,
   updateRunningFileFilename
 } from '../db/repository.js';
-import { childFailureSummary, isEnospc, runLoggedProcess } from '../utils/child.js';
+import { childFailureSummary, commandLine, isEnospc, runLoggedProcess } from '../utils/child.js';
 import { removeDownloadPartialsKeepLog } from '../utils/cleanup.js';
 import { fileLogPath, fileMediaPath, downloadDir, stripMkv } from '../utils/paths.js';
 import { renderDownloadFilename } from '../utils/templates.js';
@@ -83,10 +83,15 @@ export class DownloadWorker {
       return false;
     }
     if (!claimFile(this.db, pending.id)) {
+      this.logger.debug?.({ event: 'download.claim_skipped', fileId: pending.id }, 'download claim skipped');
       return true;
     }
 
     const row = getFileOrThrow(this.db, pending.id);
+    this.logger.debug?.(
+      { event: 'download.claimed', fileId: row.id, filename: row.filename, quality: row.quality },
+      'download claimed'
+    );
     const controller = new AbortController();
     const done = this.execute(
       row,
@@ -113,6 +118,10 @@ export class DownloadWorker {
     let finalRow = row;
 
     try {
+      this.logger.debug?.(
+        { event: 'download.started', fileId: row.id, filename: row.filename, url: row.url },
+        'download started'
+      );
       await removeDownloadPartialsKeepLog(this.config, row);
       logStream.write(`starting svtplay-dl for ${row.url}\n`);
       const result = await this.runSvtplayDl(row, logStream, controller);
@@ -126,21 +135,31 @@ export class DownloadWorker {
         finalRow = await this.applyCodecTemplate(row, logStream, controller);
         logStream.write(`completed ${finalRow.filename}\n`);
         transitionFileCompleted(this.db, this.config, finalRow);
+        this.logger.debug?.(
+          { event: 'download.completed', fileId: finalRow.id, filename: finalRow.filename },
+          'download completed'
+        );
         return;
       }
 
       if (isTerminalSuppressed()) {
         logStream.write('download child stopped without terminal transition\n');
+        this.logger.debug?.({ event: 'download.terminal_suppressed', fileId: row.id }, 'download terminal transition suppressed');
         return;
       }
 
       const error = childFailureSummary('svtplay-dl', result);
       const transitioned = transitionFileFailed(this.db, this.config, row, 'child_exit_nonzero', error);
+      this.logger.debug?.(
+        { event: 'download.failed', fileId: row.id, errorCode: 'child_exit_nonzero', error, transitioned },
+        'download failed'
+      );
       if (transitioned) {
         await removeDownloadPartialsKeepLog(this.config, row);
       }
     } catch (error) {
       if (isTerminalSuppressed()) {
+        this.logger.debug?.({ event: 'download.terminal_suppressed', fileId: row.id }, 'download terminal transition suppressed');
         return;
       }
       const code = error instanceof DownloadPipelineError
@@ -149,6 +168,10 @@ export class DownloadWorker {
       const message = code === 'insufficient_space' ? 'disk full' : error instanceof Error ? error.message : String(error);
       try {
         const transitioned = transitionFileFailed(this.db, this.config, row, code, message);
+        this.logger.debug?.(
+          { event: 'download.failed', fileId: row.id, errorCode: code, error: message, transitioned },
+          'download failed'
+        );
         if (transitioned && code !== 'insufficient_space') {
           await removeDownloadPartialsKeepLog(this.config, row);
         }
@@ -170,9 +193,22 @@ export class DownloadWorker {
     logStream: fs.WriteStream,
     controller: AbortController
   ): Promise<ChildProcessResult> {
+    const command = 'svtplay-dl';
+    const args = buildSvtplayDownloadArgs(this.config, row);
+    this.logger.debug?.(
+      {
+        event: 'svtplay_dl.command',
+        source: 'download',
+        fileId: row.id,
+        command,
+        args,
+        commandLine: commandLine(command, args)
+      },
+      'svtplay-dl command'
+    );
     return runLoggedProcess({
-      command: 'svtplay-dl',
-      args: buildSvtplayDownloadArgs(this.config, row),
+      command,
+      args,
       logStream,
       signal: controller.signal,
       logger: this.logger,
@@ -194,6 +230,16 @@ export class DownloadWorker {
     const tempPath = path.join(downloadDir(this.config, row.id), `${stripMkv(row.filename)}.muxing.mkv`);
     const muxInputs = await prepareMediaInputsForMux(mediaInputs, logStream, controller.signal);
     const languages = await detectSubtitleLanguages(sidecars, logStream);
+    this.logger.debug?.(
+      {
+        event: 'download.mux.started',
+        fileId: row.id,
+        mediaInputCount: mediaInputs.length,
+        subtitleCount: sidecars.length,
+        subtitleLanguages: languages
+      },
+      'download mux started'
+    );
     logStream.write(`muxing ${mediaInputs.length} media artifact(s) and ${sidecars.length} subtitle sidecar(s) into ${row.filename}\n`);
     const result = await runLoggedProcess({
       command: 'ffmpeg',
@@ -215,6 +261,7 @@ export class DownloadWorker {
 
     await assertMuxedMediaHasRequiredStreams(tempPath, controller.signal);
     await fsp.rename(tempPath, fileMediaPath(this.config, row));
+    this.logger.debug?.({ event: 'download.mux.completed', fileId: row.id }, 'download mux completed');
     logStream.write(`muxed download artifacts into ${row.filename}\n`);
   }
 
@@ -259,6 +306,17 @@ export class DownloadWorker {
       throw new Error(`failed to update filename for running file: ${row.id}`);
     }
 
+    this.logger.debug?.(
+      {
+        event: 'download.filename_updated',
+        fileId: row.id,
+        previousFilename: row.filename,
+        filename,
+        videoCodec: codecs.videoCodec,
+        audioCodec: codecs.audioCodec
+      },
+      'download filename updated'
+    );
     logStream.write(`renamed media with codecs: ${row.filename} -> ${filename}\n`);
     return updated;
   }

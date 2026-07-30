@@ -51,12 +51,20 @@ export class WebhookDispatcher {
         await sleep(5000, this.stopController.signal);
         continue;
       }
+      this.logger.debug?.(
+        { event: 'webhook.claimed', deliveryId: delivery.id, webhookEvent: delivery.event, attempts: delivery.attempts },
+        'webhook delivery claimed'
+      );
       await this.dispatch(delivery);
     }
   }
 
   private async dispatch(delivery: WebhookDeliveryRow): Promise<void> {
     try {
+      this.logger.debug?.(
+        { event: 'webhook.request_started', deliveryId: delivery.id, webhookEvent: delivery.event },
+        'webhook request started'
+      );
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         'x-webhook-event': delivery.event,
@@ -76,9 +84,17 @@ export class WebhookDispatcher {
         body: delivery.payload,
         signal: AbortSignal.timeout(30_000)
       });
+      this.logger.debug?.(
+        { event: 'webhook.response', deliveryId: delivery.id, webhookEvent: delivery.event, status: response.status },
+        'webhook response'
+      );
 
       if (response.status >= 200 && response.status <= 299) {
         markWebhookDelivered(this.db, delivery.id);
+        this.logger.debug?.(
+          { event: 'webhook.delivered', deliveryId: delivery.id, webhookEvent: delivery.event },
+          'webhook delivered'
+        );
         return;
       }
 
@@ -100,5 +116,9 @@ export class WebhookDispatcher {
     }
 
     markWebhookRetry(this.db, delivery.id, attempts, addMillisecondsIso(nowIso(), nextOffset), lastError);
+    this.logger.debug?.(
+      { event: 'webhook.retry_scheduled', deliveryId: delivery.id, attempts, nextOffsetMs: nextOffset },
+      'webhook retry scheduled'
+    );
   }
 }

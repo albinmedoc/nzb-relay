@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { XMLParser } from 'fast-xml-parser';
 import type { Logger } from 'pino';
 import { fetch } from 'undici';
+import { commandLine } from '../utils/child.js';
 
 const SVT_BASE_URL = 'https://www.svtplay.se';
 const QUALITY_PROBE_TIMEOUT_MS = 60_000;
@@ -303,7 +304,7 @@ function resolveQualityProbe(options: SvtSerieFetchOptions): QualityProbe {
   if (options.populateQualities === false) {
     return emptyQualityProbe;
   }
-  return memoizeQualityProbe(options.qualityProbe ?? probeSvtplayDlQualities);
+  return memoizeQualityProbe(options.qualityProbe ?? createSvtplayDlQualityProbe(options.logger));
 }
 
 function resolveQualityProbeConcurrency(value: number | undefined): number {
@@ -333,11 +334,17 @@ function memoizeQualityProbe(probe: QualityProbe): QualityProbe {
   };
 }
 
-function probeSvtplayDlQualities(url: string): Promise<string[]> {
+function createSvtplayDlQualityProbe(logger?: Logger): QualityProbe {
+  return (url) => probeSvtplayDlQualities(url, logger);
+}
+
+function probeSvtplayDlQualities(url: string, logger?: Logger): Promise<string[]> {
   return new Promise((resolve, reject) => {
     let output = '';
     let settled = false;
     let timeout: NodeJS.Timeout | null = null;
+    const command = 'svtplay-dl';
+    const args = ['--list-quality', url];
 
     const settle = (error: Error | null, qualities?: string[]) => {
       if (settled) {
@@ -354,7 +361,17 @@ function probeSvtplayDlQualities(url: string): Promise<string[]> {
       resolve(qualities ?? []);
     };
 
-    const child = spawn('svtplay-dl', ['--list-quality', url], {
+    logger?.debug?.(
+      {
+        event: 'svtplay_dl.command',
+        source: 'quality_probe',
+        command,
+        args,
+        commandLine: commandLine(command, args)
+      },
+      'svtplay-dl command'
+    );
+    const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -671,7 +688,7 @@ export async function fetchSvtMovie(url: string, options: SvtMovieFetchOptions =
   const movieResult = await parseSvtMoviePageHtml(
     await response.text(),
     normalizedUrl,
-    options.qualityProbe ?? probeSvtplayDlQualities,
+    options.qualityProbe ?? createSvtplayDlQualityProbe(options.logger),
     options.logger
   );
   if (!movieResult) {

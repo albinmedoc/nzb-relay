@@ -55,8 +55,13 @@ export class MovieWorker {
   }
 
   private async reconcileDownloads(): Promise<void> {
-    for (const movie of movieDownloadReconcileCandidates(this.db, MOVIE_BATCH_SIZE)) {
+    const candidates = movieDownloadReconcileCandidates(this.db, MOVIE_BATCH_SIZE);
+    if (candidates.length > 0) {
+      this.logger.debug?.({ event: 'movie.downloads_reconcile', movieCount: candidates.length }, 'movie downloads reconcile');
+    }
+    for (const movie of candidates) {
       if (!movie.fileId) {
+        this.logger.debug?.({ event: 'movie.download.file_missing', movieId: movie.id }, 'movie download file reference missing');
         markMovieDownloadFailed(this.db, movie.id, {
           errorCode: 'file_missing',
           error: 'download file reference is missing'
@@ -66,6 +71,10 @@ export class MovieWorker {
 
       const file = getFile(this.db, movie.fileId);
       if (!file || file.deleted) {
+        this.logger.debug?.(
+          { event: 'movie.download.file_deleted', movieId: movie.id, fileId: movie.fileId },
+          'movie download file missing or deleted'
+        );
         markMovieDownloadFailed(this.db, movie.id, {
           errorCode: 'file_deleted',
           error: 'download file is missing or deleted'
@@ -74,11 +83,19 @@ export class MovieWorker {
       }
 
       if (file.status === 'completed') {
+        this.logger.debug?.(
+          { event: 'movie.download.completed', movieId: movie.id, fileId: file.id },
+          'movie download completed'
+        );
         markMovieDownloadCompleted(this.db, movie.id, file.downloadedAt ?? new Date().toISOString());
         continue;
       }
 
       if (file.status === 'failed') {
+        this.logger.debug?.(
+          { event: 'movie.download.failed', movieId: movie.id, fileId: file.id, errorCode: file.errorCode },
+          'movie download failed'
+        );
         markMovieDownloadFailed(this.db, movie.id, {
           errorCode: file.errorCode ?? 'download_failed',
           error: file.error ?? 'download failed'
@@ -88,18 +105,31 @@ export class MovieWorker {
   }
 
   private async queueNzbs(): Promise<void> {
-    for (const movie of movieNzbQueueCandidates(this.db, MOVIE_BATCH_SIZE)) {
+    const candidates = movieNzbQueueCandidates(this.db, MOVIE_BATCH_SIZE);
+    if (candidates.length > 0) {
+      this.logger.debug?.({ event: 'movie.nzbs_queue', movieCount: candidates.length }, 'movie NZBs queue');
+    }
+    for (const movie of candidates) {
       try {
         if (!movie.fileId) {
+          this.logger.debug?.({ event: 'movie.nzb.file_missing', movieId: movie.id }, 'movie NZB file missing');
           throw new Error('download file reference is missing');
         }
 
         const file = getFile(this.db, movie.fileId);
         if (!file || file.deleted || file.status !== 'completed') {
+          this.logger.debug?.(
+            { event: 'movie.nzb.file_not_postable', movieId: movie.id, fileId: movie.fileId },
+            'movie NZB file not postable'
+          );
           throw new Error('download file is not postable');
         }
 
         if (!(await mediaExists(this.config, file))) {
+          this.logger.debug?.(
+            { event: 'movie.nzb.media_missing', movieId: movie.id, fileId: file.id },
+            'movie NZB media missing'
+          );
           markMovieDownloadFailed(this.db, movie.id, {
             errorCode: 'file_media_missing',
             error: 'download media is missing'
@@ -109,6 +139,10 @@ export class MovieWorker {
 
         const nzb = queueMovieNzb(this.db, movie);
         await ensureNzbLog(this.config, nzb);
+        this.logger.debug?.(
+          { event: 'movie.nzb.queued', movieId: movie.id, nzbId: nzb.id, releaseName: nzb.releaseName },
+          'movie NZB queued'
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error({ event: 'movie.nzb.queue_failed', movieId: movie.id, error }, 'movie NZB queue failed');
@@ -121,8 +155,13 @@ export class MovieWorker {
   }
 
   private async reconcileNzbs(): Promise<void> {
-    for (const movie of movieNzbReconcileCandidates(this.db, MOVIE_BATCH_SIZE)) {
+    const candidates = movieNzbReconcileCandidates(this.db, MOVIE_BATCH_SIZE);
+    if (candidates.length > 0) {
+      this.logger.debug?.({ event: 'movie.nzbs_reconcile', movieCount: candidates.length }, 'movie NZBs reconcile');
+    }
+    for (const movie of candidates) {
       if (!movie.nzbId) {
+        this.logger.debug?.({ event: 'movie.nzb.missing', movieId: movie.id }, 'movie NZB missing');
         markMovieNzbFailed(this.db, movie.id, {
           errorCode: 'nzb_missing',
           error: 'NZB job reference is missing'
@@ -132,6 +171,7 @@ export class MovieWorker {
 
       const nzb = getNzb(this.db, movie.nzbId);
       if (!nzb) {
+        this.logger.debug?.({ event: 'movie.nzb.missing', movieId: movie.id, nzbId: movie.nzbId }, 'movie NZB missing');
         markMovieNzbFailed(this.db, movie.id, {
           errorCode: 'nzb_missing',
           error: 'NZB job is missing'
@@ -140,11 +180,16 @@ export class MovieWorker {
       }
 
       if (nzb.status === 'completed') {
+        this.logger.debug?.({ event: 'movie.nzb.completed', movieId: movie.id, nzbId: nzb.id }, 'movie NZB completed');
         markMoviePosted(this.db, movie.id, nzb.postedAt ?? new Date().toISOString());
         continue;
       }
 
       if (nzb.status === 'failed') {
+        this.logger.debug?.(
+          { event: 'movie.nzb.failed', movieId: movie.id, nzbId: nzb.id, errorCode: nzb.errorCode },
+          'movie NZB failed'
+        );
         markMovieNzbFailed(this.db, movie.id, {
           errorCode: nzb.errorCode ?? 'nzb_failed',
           error: nzb.error ?? 'NZB job failed'

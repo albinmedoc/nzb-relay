@@ -56,6 +56,10 @@ export class IndexerUploadWorker {
         await sleep(5000, this.stopController.signal);
         continue;
       }
+      this.logger.debug?.(
+        { event: 'indexer_upload.claimed', uploadId: upload.id, nzbId: upload.nzbId, indexerName: upload.indexerName },
+        'indexer upload claimed'
+      );
       await this.dispatch(upload);
     }
   }
@@ -63,22 +67,45 @@ export class IndexerUploadWorker {
   private async dispatch(upload: IndexerUploadRow): Promise<void> {
     const target = this.config.indexerUploads.find((entry) => entry.name === upload.indexerName);
     if (!target) {
+      this.logger.debug?.(
+        { event: 'indexer_upload.target_missing', uploadId: upload.id, indexerName: upload.indexerName },
+        'indexer upload target missing'
+      );
       this.failPermanently(upload, `indexer upload target is not configured: ${upload.indexerName}`);
       return;
     }
 
     const nzb = getNzb(this.db, upload.nzbId);
     if (!nzb || nzb.status !== 'completed') {
+      this.logger.debug?.(
+        { event: 'indexer_upload.nzb_not_ready', uploadId: upload.id, nzbId: upload.nzbId, status: nzb?.status },
+        'indexer upload NZB not ready'
+      );
       this.failPermanently(upload, `nzb is not completed: ${upload.nzbId}`);
       return;
     }
 
     try {
       const request = await buildIndexerUploadRequest(this.config, target, nzb);
+      this.logger.debug?.(
+        {
+          event: 'indexer_upload.request_started',
+          uploadId: upload.id,
+          nzbId: upload.nzbId,
+          indexerName: target.name,
+          method: request.method,
+          format: target.format
+        },
+        'indexer upload request started'
+      );
       const response = await this.fetcher(target.url, {
         ...request,
         signal: AbortSignal.timeout(30_000)
       });
+      this.logger.debug?.(
+        { event: 'indexer_upload.response', uploadId: upload.id, nzbId: upload.nzbId, status: response.status },
+        'indexer upload response'
+      );
 
       if (response.status >= 200 && response.status <= 299) {
         markIndexerUploadCompleted(this.db, upload.id);
@@ -107,6 +134,10 @@ export class IndexerUploadWorker {
     }
 
     markIndexerUploadRetry(this.db, upload.id, attempts, addMillisecondsIso(nowIso(), nextOffset), lastError);
+    this.logger.debug?.(
+      { event: 'indexer_upload.retry_scheduled', uploadId: upload.id, nzbId: upload.nzbId, attempts, nextOffsetMs: nextOffset },
+      'indexer upload retry scheduled'
+    );
     this.logger.warn(
       { event: 'indexer_upload.retry', uploadId: upload.id, nzbId: upload.nzbId, attempts, lastError },
       'indexer upload failed; scheduled retry'
