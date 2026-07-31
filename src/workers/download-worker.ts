@@ -476,7 +476,7 @@ export function buildSvtplayDownloadArgs(
   config: Config,
   row: FileRow
 ): string[] {
-  return [
+  const args = [
     `--resolution=${row.quality}`,
     '--force',
     '--output-format=mkv',
@@ -487,6 +487,14 @@ export function buildSvtplayDownloadArgs(
     `--filename=${stripMkv(row.filename)}.{ext}`,
     row.url
   ];
+  if (svtplayDlVerboseEnabled(config.logLevel)) {
+    args.splice(1, 0, '--verbose');
+  }
+  return args;
+}
+
+function svtplayDlVerboseEnabled(logLevel: string): boolean {
+  return ['trace', 'debug'].includes(logLevel.toLowerCase());
 }
 
 export function buildFfmpegDownloadMuxArgs(

@@ -62,6 +62,38 @@ describe('download worker', () => {
     ]);
   });
 
+  it('adds svtplay-dl verbose output when debug logging is enabled', () => {
+    const row: FileRow = {
+      id: 'file-1',
+      url: 'https://www.svtplay.se/video/1',
+      status: 'running',
+      title: 'Title',
+      filename: 'Title.svtplay.mkv',
+      service: 'svtplay',
+      quality: '1080',
+      season: null,
+      episode: null,
+      downloadedAt: null,
+      createdAt: '2026-05-06T00:00:00.000Z',
+      deleted: 0,
+      errorCode: null,
+      error: null
+    };
+
+    expect(buildSvtplayDownloadArgs(testConfig(dataDir, { LOG_LEVEL: 'debug' }), row)).toEqual([
+      '--resolution=1080',
+      '--verbose',
+      '--force',
+      '--output-format=mkv',
+      '--subtitle',
+      '--all-subtitles',
+      '--no-merge',
+      `--output=${path.join(dataDir, 'downloads', 'file-1')}`,
+      '--filename=Title.svtplay.{ext}',
+      'https://www.svtplay.se/video/1'
+    ]);
+  });
+
   it('builds ffmpeg args to mux subtitle sidecars into the mkv', () => {
     expect(buildFfmpegSubtitleMuxArgs(
       '/data/downloads/file-1/Title.svtplay.mkv',
