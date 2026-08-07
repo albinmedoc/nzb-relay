@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { createMovie, deleteMovie, listMovies, retryMovie } from '../api';
+import { createMovie, deleteMovie, downloadArtifact, listMovies, retryMovie } from '../api';
 import BulkActionBar from '../components/BulkActionBar.vue';
 import DataTable from '../components/DataTable.vue';
 import PaginationControls from '../components/PaginationControls.vue';
@@ -143,6 +143,37 @@ function isRunning(statusValue: MovieStatus) {
   return ['download_queued', 'download_completed', 'nzb_queued'].includes(statusValue);
 }
 
+function canDownloadMovieFile(movie: MovieJob) {
+  return Boolean(movie.fileId) && ['download_completed', 'nzb_queued', 'nzb_failed', 'posted', 'blocked'].includes(movie.status);
+}
+
+function canDownloadMovieNzb(movie: MovieJob) {
+  return Boolean(movie.nzbId) && movie.status === 'posted';
+}
+
+function movieFileDownloadName(movie: MovieJob) {
+  return `${movieReleaseName(movie)}.mkv`;
+}
+
+function movieNzbDownloadName(movie: MovieJob) {
+  return `${movieReleaseName(movie)}.nzb`;
+}
+
+function movieReleaseName(movie: MovieJob) {
+  const title = sanitizeToken(movie.title) || movie.id;
+  const service = sanitizeToken(movie.service) || 'svtplay';
+  return `${title}.${service}`;
+}
+
+function sanitizeToken(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, '.')
+    .replace(/[^A-Za-z0-9._-]/g, '')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.+|\.+$/g, '');
+}
+
 onMounted(load);
 </script>
 
@@ -219,6 +250,22 @@ onMounted(load);
         <td>{{ formatDate(movie.createdAt) }}</td>
         <td>{{ formatDate(movie.postedAt) }}</td>
         <td class="actions">
+          <button
+            class="secondary"
+            type="button"
+            :disabled="!canDownloadMovieFile(movie)"
+            @click="movie.fileId && downloadArtifact(`/files/${movie.fileId}/download`, movieFileDownloadName(movie))"
+          >
+            File
+          </button>
+          <button
+            class="secondary"
+            type="button"
+            :disabled="!canDownloadMovieNzb(movie)"
+            @click="movie.nzbId && downloadArtifact(`/nzb/${movie.nzbId}/download`, movieNzbDownloadName(movie))"
+          >
+            NZB
+          </button>
           <button class="secondary" type="button" :disabled="!isFailed(movie.status)" @click="retry(movie)">Retry</button>
           <button class="danger" type="button" @click="remove(movie)">Delete</button>
         </td>
