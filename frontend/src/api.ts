@@ -122,6 +122,10 @@ export function retryNzb(nzbId: string): Promise<unknown> {
   return requestJson(`/nzb/${nzbId}/retry`, { method: 'POST' });
 }
 
+export function retrySabnzbdPush(nzbId: string): Promise<unknown> {
+  return requestJson(`/nzb/${nzbId}/sabnzbd-push/retry`, { method: 'POST' });
+}
+
 export async function deleteNzb(nzbId: string): Promise<void> {
   await ensureOk(await request(`/nzb/${nzbId}`, { method: 'DELETE' }));
 }

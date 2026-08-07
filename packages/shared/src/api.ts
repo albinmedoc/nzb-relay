@@ -186,6 +186,17 @@ export interface NzbJobResponse {
     lastError: string | null;
     uploadedAt: string | null;
   }>;
+  sabnzbdPush: {
+    id: string;
+    url: string;
+    category: string;
+    status: 'pending' | 'completed' | 'failed';
+    attempts: number;
+    nextAttemptAt: string | null;
+    lastError: string | null;
+    remoteIds: string[] | null;
+    pushedAt: string | null;
+  } | null;
 }
 
 export interface MovieJobResponse {

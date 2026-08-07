@@ -8,6 +8,7 @@ import type {
   JobStatus,
   NzbFileSummary,
   NzbRow,
+  SabnzbdPushRow,
   WebhookDeliveryRow
 } from '../types.js';
 import { enqueueWebhook } from '../webhooks.js';
@@ -535,6 +536,41 @@ export function enqueueIndexerUploads(db: AppDatabase, config: Config, row: NzbR
   })();
 }
 
+export function enqueueSabnzbdPush(db: AppDatabase, config: Config, row: NzbRow, createdAt = nowIso()): boolean {
+  if (!config.sabnzbd.url) {
+    return false;
+  }
+
+  const category = resolveSabnzbdCategory(db, config, row.id);
+  const result = db
+    .prepare(
+      `
+        INSERT OR IGNORE INTO sabnzbd_push (
+          id, nzbId, url, category, status, attempts, nextAttemptAt,
+          lastError, remoteIds, createdAt, updatedAt, pushedAt
+        )
+        VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, NULL, ?, ?, NULL)
+      `
+    )
+    .run(randomUUID(), row.id, config.sabnzbd.url, category, createdAt, createdAt, createdAt);
+
+  return result.changes === 1;
+}
+
+function resolveSabnzbdCategory(db: AppDatabase, config: Config, nzbId: string): string {
+  const movie = db.prepare('SELECT 1 FROM movie_job WHERE nzbId = ? LIMIT 1').get(nzbId);
+  if (movie) {
+    return config.sabnzbd.movieCategory;
+  }
+
+  const series = db.prepare('SELECT 1 FROM watchlist_episode WHERE nzbId = ? LIMIT 1').get(nzbId);
+  if (series) {
+    return config.sabnzbd.seriesCategory;
+  }
+
+  return config.sabnzbd.category;
+}
+
 export function listIndexerUploadsForNzb(db: AppDatabase, nzbId: string): IndexerUploadRow[] {
   return db
     .prepare(
@@ -546,6 +582,97 @@ export function listIndexerUploadsForNzb(db: AppDatabase, nzbId: string): Indexe
       `
     )
     .all(nzbId) as IndexerUploadRow[];
+}
+
+export function getSabnzbdPushForNzb(db: AppDatabase, nzbId: string): SabnzbdPushRow | null {
+  return (
+    (db
+      .prepare(
+        `
+          SELECT *
+          FROM sabnzbd_push
+          WHERE nzbId = ?
+        `
+      )
+      .get(nzbId) as SabnzbdPushRow | undefined) ?? null
+  );
+}
+
+export function nextDueSabnzbdPush(db: AppDatabase, now = nowIso()): SabnzbdPushRow | null {
+  return (
+    (db
+      .prepare(
+        `
+          SELECT *
+          FROM sabnzbd_push
+          WHERE status = 'pending'
+            AND nextAttemptAt IS NOT NULL
+            AND nextAttemptAt <= ?
+          ORDER BY nextAttemptAt ASC, createdAt ASC
+          LIMIT 1
+        `
+      )
+      .get(now) as SabnzbdPushRow | undefined) ?? null
+  );
+}
+
+export function markSabnzbdPushCompleted(
+  db: AppDatabase,
+  id: string,
+  remoteIds: string | null,
+  pushedAt = nowIso()
+): void {
+  db.prepare(
+    `
+      UPDATE sabnzbd_push
+      SET status = 'completed', nextAttemptAt = NULL, lastError = NULL,
+          remoteIds = ?, pushedAt = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(remoteIds, pushedAt, pushedAt, id);
+}
+
+export function markSabnzbdPushRetry(
+  db: AppDatabase,
+  id: string,
+  attempts: number,
+  nextAttemptAt: string,
+  lastError: string
+): void {
+  const updatedAt = nowIso();
+  db.prepare(
+    `
+      UPDATE sabnzbd_push
+      SET attempts = ?, nextAttemptAt = ?, status = 'pending', lastError = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(attempts, nextAttemptAt, lastError, updatedAt, id);
+}
+
+export function markSabnzbdPushFailed(db: AppDatabase, id: string, attempts: number, lastError: string): void {
+  const updatedAt = nowIso();
+  db.prepare(
+    `
+      UPDATE sabnzbd_push
+      SET attempts = ?, nextAttemptAt = NULL, status = 'failed', lastError = ?, updatedAt = ?
+      WHERE id = ?
+    `
+  ).run(attempts, lastError, updatedAt, id);
+}
+
+export function retryFailedSabnzbdPush(db: AppDatabase, nzbId: string, nextAttemptAt = nowIso()): boolean {
+  const updatedAt = nowIso();
+  const result = db
+    .prepare(
+      `
+        UPDATE sabnzbd_push
+        SET status = 'pending', attempts = 0, nextAttemptAt = ?,
+            lastError = NULL, remoteIds = NULL, pushedAt = NULL, updatedAt = ?
+        WHERE nzbId = ? AND status = 'failed'
+      `
+    )
+    .run(nextAttemptAt, updatedAt, nzbId);
+  return result.changes === 1;
 }
 
 export function nextDueIndexerUpload(db: AppDatabase, now = nowIso()): IndexerUploadRow | null {

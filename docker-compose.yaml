@@ -22,6 +22,11 @@ services:
       USENET_PASS: "usenet-password"
       USENET_NEWSGROUPS: "alt.binaries.example,alt.binaries.misc"
       USENET_NEWSGROUPS_PER_UPLOAD: "20"
+      # SABNZBD_URL: "http://sabnzbd:8080/api"
+      # SABNZBD_API_KEY: "sab-api-key"
+      # SABNZBD_MOVIE_CATEGORY: "movies"
+      # SABNZBD_SERIES_CATEGORY: "series"
+      # SABNZBD_CATEGORY: "*"
 
   nzb-relay-frontend:
     image: ghcr.io/albinmedoc/nzb-relay-frontend:latest

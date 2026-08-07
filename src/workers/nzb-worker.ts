@@ -11,6 +11,7 @@ import {
   canonicalFilesForNzb,
   claimNzb,
   enqueueIndexerUploads,
+  enqueueSabnzbdPush,
   getNzbOrThrow,
   nextPendingNzb,
   transitionNzbCompleted,
@@ -150,6 +151,11 @@ export class NzbWorker {
           enqueueIndexerUploads(this.db, this.config, getNzbOrThrow(this.db, row.id));
         } catch (error) {
           this.logger.error({ event: 'indexer_upload.enqueue_failed', nzbId: row.id, error }, 'failed to enqueue indexer uploads');
+        }
+        try {
+          enqueueSabnzbdPush(this.db, this.config, getNzbOrThrow(this.db, row.id));
+        } catch (error) {
+          this.logger.error({ event: 'sabnzbd_push.enqueue_failed', nzbId: row.id, error }, 'failed to enqueue SABnzbd push');
         }
       }
 

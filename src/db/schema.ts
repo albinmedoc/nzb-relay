@@ -82,6 +82,30 @@ export const indexerUpload = sqliteTable(
   })
 );
 
+export const sabnzbdPush = sqliteTable(
+  'sabnzbd_push',
+  {
+    id: text('id').primaryKey(),
+    nzbId: text('nzbId')
+      .notNull()
+      .references(() => nzb.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    category: text('category').notNull(),
+    status: text('status').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: text('nextAttemptAt'),
+    lastError: text('lastError'),
+    remoteIds: text('remoteIds'),
+    createdAt: text('createdAt').notNull(),
+    updatedAt: text('updatedAt').notNull(),
+    pushedAt: text('pushedAt')
+  },
+  (table) => ({
+    nzbUnique: uniqueIndex('sabnzbd_push_nzb_unique').on(table.nzbId),
+    statusNextAttemptIdx: index('sabnzbd_push_status_next_attempt_idx').on(table.status, table.nextAttemptAt)
+  })
+);
+
 export const movieJob = sqliteTable(
   'movie_job',
   {

@@ -185,6 +185,20 @@ Supported target fields:
 
 `headers`, `fields`, and `filenameTemplate` support `{nzbId}`, `{releaseName}`, `{nzbFile}`, and `{postedAt}` substitutions.
 
+## SABnzbd / NzbDAV Push
+
+SABnzbd-compatible pushes are optional. When `SABNZBD_URL` is configured, each completed NZB is queued for delivery to that single client with SAB's multipart `addfile` API. This supports SABnzbd and NzbDAV endpoints that expose SAB-compatible APIs.
+
+Push failures are retried independently from the NZB job. A failed SAB/NzbDAV push does not change the parent NZB from `completed` to `failed`.
+
+| Variable | Required | Default | Description |
+|---|---:|---|---|
+| `SABNZBD_URL` | no | empty | Full SAB-compatible API URL, usually ending in `/api`. Empty disables client pushes. |
+| `SABNZBD_API_KEY` | no | empty | Optional API key sent as SAB's `apikey` form field. |
+| `SABNZBD_MOVIE_CATEGORY` | no | `movies` | Category sent for NZBs linked from movie jobs. |
+| `SABNZBD_SERIES_CATEGORY` | no | `series` | Category sent for NZBs linked from watchlist series episodes. |
+| `SABNZBD_CATEGORY` | no | `*` | Fallback category for manually created or unclassified NZBs. |
+
 ## Tooling And Container Variables
 
 These variables are not part of normal application configuration, but they appear in project tooling or the container image.

@@ -60,6 +60,11 @@ button.danger:hover:not(:disabled) {
   background: #912018;
 }
 
+button.compact {
+  min-height: 28px;
+  padding: 0 8px;
+}
+
 input[type='url'],
 input[type='text'],
 input[type='date'],

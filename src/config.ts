@@ -36,6 +36,13 @@ export interface Config {
     newsgroups: string[];
     newsgroupsPerUpload: number;
   };
+  sabnzbd: {
+    url: string;
+    apiKey: string;
+    movieCategory: string;
+    seriesCategory: string;
+    category: string;
+  };
   indexerUploads: IndexerUploadConfig[];
   webhooks: {
     defaultUrl: string;
@@ -116,6 +123,11 @@ const envSchema = z
     USENET_PASS: z.string().optional(),
     USENET_NEWSGROUPS: z.string().optional(),
     USENET_NEWSGROUPS_PER_UPLOAD: z.string().optional(),
+    SABNZBD_URL: z.string().optional(),
+    SABNZBD_API_KEY: z.string().optional(),
+    SABNZBD_MOVIE_CATEGORY: z.string().optional(),
+    SABNZBD_SERIES_CATEGORY: z.string().optional(),
+    SABNZBD_CATEGORY: z.string().optional(),
     INDEXER_UPLOADS_JSON: z.string().optional(),
     WEBHOOK_URL: z.string().optional(),
     WEBHOOK_DOWNLOAD_COMPLETED_URL: z.string().optional(),
@@ -175,6 +187,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         20,
         'USENET_NEWSGROUPS_PER_UPLOAD'
       )
+    },
+    sabnzbd: {
+      url: readOptionalUrl(parsedEnv.SABNZBD_URL, 'SABNZBD_URL'),
+      apiKey: parsedEnv.SABNZBD_API_KEY ?? '',
+      movieCategory: readTrimmed(parsedEnv.SABNZBD_MOVIE_CATEGORY, 'movies'),
+      seriesCategory: readTrimmed(parsedEnv.SABNZBD_SERIES_CATEGORY, 'series'),
+      category: readTrimmed(parsedEnv.SABNZBD_CATEGORY, '*')
     },
     indexerUploads: readIndexerUploads(parsedEnv.INDEXER_UPLOADS_JSON),
     webhooks: {
@@ -301,6 +320,19 @@ function readFloat(value: string | undefined, fallback: number, name: string): n
       return parsed;
     })
     .parse(value);
+}
+
+function readTrimmed(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed || fallback;
+}
+
+function readOptionalUrl(value: string | undefined, name: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return z.string().url(`${name} must be a URL`).parse(trimmed);
 }
 
 function readBool(value: string | undefined, fallback: boolean): boolean {

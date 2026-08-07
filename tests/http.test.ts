@@ -5,7 +5,7 @@ import type { Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import type { AppDatabase } from '../src/db/client.js';
-import { getFile, getNzb, insertFile, insertNzb } from '../src/db/repository.js';
+import { enqueueSabnzbdPush, getFile, getNzb, insertFile, insertNzb } from '../src/db/repository.js';
 import { insertWatchlistSource, upsertWatchlistEpisode } from '../src/db/watchlist-repository.js';
 import { requestLoggingMiddleware } from '../src/http/middleware.js';
 import { nzbLogPath } from '../src/utils/paths.js';
@@ -635,6 +635,81 @@ describe('http api', () => {
       postedAt: null,
       errorCode: null,
       error: null
+    });
+  });
+
+  it('serializes SABnzbd push state on NZB responses', async () => {
+    config = testConfig(dataDir, {
+      API_KEY: 'secret',
+      SABNZBD_URL: 'http://sabnzbd:8080/api',
+      SABNZBD_CATEGORY: 'manual'
+    });
+    db.close();
+    db = createTestDb(config);
+    app = createTestApp(db, config);
+    const file = createFile('https://example.test/sab-serialize-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Serialize.Sab', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run('2026-05-06T01:00:00.000Z', nzb.id);
+    enqueueSabnzbdPush(db, config, getNzb(db, nzb.id)!);
+    db.prepare("UPDATE sabnzbd_push SET status = 'completed', remoteIds = ?, pushedAt = ? WHERE nzbId = ?").run(
+      '["nzo-1"]',
+      '2026-05-06T01:01:00.000Z',
+      nzb.id
+    );
+
+    const response = await app.request(`/v1/nzb/${nzb.id}`, {
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      id: nzb.id,
+      sabnzbdPush: {
+        url: 'http://sabnzbd:8080/api',
+        category: 'manual',
+        status: 'completed',
+        attempts: 0,
+        remoteIds: ['nzo-1'],
+        pushedAt: '2026-05-06T01:01:00.000Z'
+      }
+    });
+  });
+
+  it('retries a failed SABnzbd push', async () => {
+    config = testConfig(dataDir, {
+      API_KEY: 'secret',
+      SABNZBD_URL: 'http://sabnzbd:8080/api'
+    });
+    db.close();
+    db = createTestDb(config);
+    app = createTestApp(db, config);
+    const file = createFile('https://example.test/sab-retry-file');
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-06T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Retry.Sab', fileIds: [file.id] });
+    db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run('2026-05-06T01:00:00.000Z', nzb.id);
+    enqueueSabnzbdPush(db, config, getNzb(db, nzb.id)!);
+    db.prepare("UPDATE sabnzbd_push SET status = 'failed', attempts = 2, lastError = 'down' WHERE nzbId = ?").run(nzb.id);
+
+    const response = await app.request(`/v1/nzb/${nzb.id}/sabnzbd-push/retry`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret' }
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      id: nzb.id,
+      sabnzbdPush: {
+        status: 'pending',
+        attempts: 0,
+        lastError: null
+      }
     });
   });
 

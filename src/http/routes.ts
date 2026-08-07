@@ -39,6 +39,7 @@ import {
   deleteNzb,
   getFile,
   getNzb,
+  getSabnzbdPushForNzb,
   hardDeleteFile,
   hasActiveUrl,
   insertFile,
@@ -49,7 +50,8 @@ import {
   listNzbs,
   markFileDeleted,
   retryFailedFile,
-  retryFailedNzb
+  retryFailedNzb,
+  retryFailedSabnzbdPush
 } from '../db/repository.js';
 import type { JobListFilters } from '../db/repository.js';
 import {
@@ -632,6 +634,24 @@ export function createApp({
     return c.json({ nzbId: row.id, status: 'pending' } satisfies RetryNzbResponse, 202);
   });
 
+  v1.post('/nzb/:nzbId/sabnzbd-push/retry', (c) => {
+    const row = getNzb(db, c.req.param('nzbId'));
+    if (!row) {
+      return errorResponse(c, 404, 'not_found', 'nzb not found');
+    }
+    const push = getSabnzbdPushForNzb(db, row.id);
+    if (!push) {
+      return errorResponse(c, 404, 'not_found', 'SABnzbd push not found');
+    }
+    if (push.status !== 'failed') {
+      return errorResponse(c, 409, 'sabnzbd_push_not_failed', 'SABnzbd push is not failed');
+    }
+    if (!retryFailedSabnzbdPush(db, row.id)) {
+      return errorResponse(c, 409, 'sabnzbd_push_not_failed', 'SABnzbd push is not failed');
+    }
+    return c.json(serializeNzb(db, row), 202);
+  });
+
   v1.get('/nzb/:nzbId', (c) => {
     const row = getNzb(db, c.req.param('nzbId'));
     if (!row) {
@@ -691,6 +711,7 @@ function serializeFile(row: FileRow): FileJobResponse {
 }
 
 function serializeNzb(db: AppDatabase, row: NzbRow): NzbJobResponse {
+  const sabnzbdPush = getSabnzbdPushForNzb(db, row.id);
   return {
     id: row.id,
     status: row.status,
@@ -715,8 +736,33 @@ function serializeNzb(db: AppDatabase, row: NzbRow): NzbJobResponse {
       nextAttemptAt: upload.nextAttemptAt,
       lastError: upload.lastError,
       uploadedAt: upload.uploadedAt
-    }))
+    })),
+    sabnzbdPush: sabnzbdPush
+      ? {
+          id: sabnzbdPush.id,
+          url: sabnzbdPush.url,
+          category: sabnzbdPush.category,
+          status: sabnzbdPush.status,
+          attempts: sabnzbdPush.attempts,
+          nextAttemptAt: sabnzbdPush.nextAttemptAt,
+          lastError: sabnzbdPush.lastError,
+          remoteIds: parseRemoteIds(sabnzbdPush.remoteIds),
+          pushedAt: sabnzbdPush.pushedAt
+        }
+      : null
   };
+}
+
+function parseRemoteIds(value: string | null): string[] | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : null;
+  } catch {
+    return null;
+  }
 }
 
 function serializeMovie(row: MovieJobRow): MovieJobResponse {

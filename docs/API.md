@@ -630,7 +630,18 @@ Response:
           "lastError": null,
           "uploadedAt": "2026-05-05T12:11:00.000Z"
         }
-      ]
+      ],
+      "sabnzbdPush": {
+        "id": "push-uuid",
+        "url": "http://sabnzbd:8080/api",
+        "category": "series",
+        "status": "completed",
+        "attempts": 0,
+        "nextAttemptAt": null,
+        "lastError": null,
+        "remoteIds": ["SABnzbd_nzo_id"],
+        "pushedAt": "2026-05-05T12:12:00.000Z"
+      }
     }
   ],
   "total": 1,
@@ -641,6 +652,7 @@ Response:
 
 Nested files are returned in canonical order: `episode ASC NULLS LAST, fileId ASC`.
 `indexerUploads` is empty unless optional indexer upload targets are configured.
+`sabnzbdPush` is `null` unless a SABnzbd/NzbDAV push was queued for the NZB.
 
 ### `GET /v1/nzb/:nzbId`
 
@@ -735,6 +747,18 @@ Status codes:
 - `409 file_pending`
 - `409 file_failed`
 - `409 file_deleted`
+
+### `POST /v1/nzb/:nzbId/sabnzbd-push/retry`
+
+Retries a failed SABnzbd/NzbDAV push by resetting the existing push row back to `pending`.
+
+Response is the full NZB metadata response, including the updated `sabnzbdPush`.
+
+Status codes:
+
+- `202` queued for retry
+- `404 not_found` NZB or push row does not exist
+- `409 sabnzbd_push_not_failed`
 
 ## Webhooks
 

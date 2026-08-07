@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { deleteNzb, downloadArtifact, downloadNzbArchive, listNzbs, readText, retryNzb } from '../api';
+import { deleteNzb, downloadArtifact, downloadNzbArchive, listNzbs, readText, retryNzb, retrySabnzbdPush } from '../api';
 import BulkActionBar from '../components/BulkActionBar.vue';
 import BulkDownloadDialog from '../components/BulkDownloadDialog.vue';
 import DataTable from '../components/DataTable.vue';
@@ -72,6 +72,14 @@ async function retry(nzb: NzbJob) {
     await retryNzb(nzb.id);
     await load(false);
     setNotice('NZB queued for retry.');
+  });
+}
+
+async function retryPush(nzb: NzbJob) {
+  await runAction(async () => {
+    await retrySabnzbdPush(nzb.id);
+    await load(false);
+    setNotice('SAB/NzbDAV push queued for retry.');
   });
 }
 
@@ -180,6 +188,7 @@ onMounted(load);
         <th>NZB</th>
         <th>Status</th>
         <th>Files</th>
+        <th>SAB/NzbDAV</th>
         <th>Created</th>
         <th>Posted</th>
         <th>Actions</th>
@@ -194,6 +203,22 @@ onMounted(load);
           <span v-if="nzb.error" class="subtext">{{ nzb.error }}</span>
         </td>
         <td>{{ nzb.files.length }}</td>
+        <td>
+          <template v-if="nzb.sabnzbdPush">
+            <StatusBadge :status="nzb.sabnzbdPush.status" />
+            <span class="subtext">{{ nzb.sabnzbdPush.category }}</span>
+            <span v-if="nzb.sabnzbdPush.lastError" class="subtext">{{ nzb.sabnzbdPush.lastError }}</span>
+            <button
+              v-if="nzb.sabnzbdPush.status === 'failed'"
+              class="secondary compact"
+              type="button"
+              @click="retryPush(nzb)"
+            >
+              Retry
+            </button>
+          </template>
+          <span v-else class="muted">-</span>
+        </td>
         <td>{{ formatDate(nzb.createdAt) }}</td>
         <td>{{ formatDate(nzb.postedAt) }}</td>
         <td class="actions">

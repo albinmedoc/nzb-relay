@@ -3,6 +3,7 @@ import type { JobStatus, MovieStatus, WatchlistEpisodeStatus, WatchlistSourceTyp
 export type { JobStatus, MovieStatus, WatchlistEpisodeStatus, WatchlistSourceType };
 export type WebhookStatus = 'pending' | 'delivered' | 'failed';
 export type IndexerUploadStatus = 'pending' | 'completed' | 'failed';
+export type SabnzbdPushStatus = 'pending' | 'completed' | 'failed';
 
 export type ErrorCode =
   | 'insufficient_space'
@@ -68,6 +69,21 @@ export interface IndexerUploadRow {
   createdAt: string;
   updatedAt: string;
   uploadedAt: string | null;
+}
+
+export interface SabnzbdPushRow {
+  id: string;
+  nzbId: string;
+  url: string;
+  category: string;
+  status: SabnzbdPushStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  remoteIds: string | null;
+  createdAt: string;
+  updatedAt: string;
+  pushedAt: string | null;
 }
 
 export interface MovieJobRow {

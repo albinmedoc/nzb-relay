@@ -89,6 +89,8 @@ Optional indexer uploads can be enabled with `INDEXER_UPLOADS_JSON`. For Drunken
 
 Indexer upload failures are retried and reported on the NZB API response, but they do not fail a completed Usenet upload.
 
+Completed NZBs can also be pushed automatically to one SABnzbd-compatible client, including NzbDAV. Set `SABNZBD_URL` to the client's `/api` endpoint, optionally set `SABNZBD_API_KEY`, and use `SABNZBD_MOVIE_CATEGORY` / `SABNZBD_SERIES_CATEGORY` to route movie and series jobs.
+
 The service listens on `http://localhost:3001` by default. Health is available at `http://localhost:3001/v1/health`.
 The frontend listens on `http://localhost:8080` in the compose example. If the frontend is served from a different origin, set backend `CORS_ORIGINS` to that browser origin.
 Open the frontend with Basic Auth credentials where the username is the backend URL and the password is the API key. When using credentials in the URL, percent-encode the backend URL:

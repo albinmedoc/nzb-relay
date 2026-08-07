@@ -80,6 +80,40 @@ describe('config and templates', () => {
     ]);
   });
 
+  it('loads single SABnzbd-compatible push configuration', () => {
+    const config = loadConfig({
+      SABNZBD_URL: 'http://sabnzbd:8080/api',
+      SABNZBD_API_KEY: 'secret',
+      SABNZBD_MOVIE_CATEGORY: 'films',
+      SABNZBD_SERIES_CATEGORY: 'shows',
+      SABNZBD_CATEGORY: 'manual'
+    });
+
+    expect(config.sabnzbd).toEqual({
+      url: 'http://sabnzbd:8080/api',
+      apiKey: 'secret',
+      movieCategory: 'films',
+      seriesCategory: 'shows',
+      category: 'manual'
+    });
+  });
+
+  it('defaults optional SABnzbd-compatible push settings', () => {
+    const config = loadConfig({
+      SABNZBD_URL: 'http://nzbdav:3000/api'
+    });
+
+    expect(config.sabnzbd).toEqual({
+      url: 'http://nzbdav:3000/api',
+      apiKey: '',
+      movieCategory: 'movies',
+      seriesCategory: 'series',
+      category: '*'
+    });
+    expect(loadConfig().sabnzbd.url).toBe('');
+    expect(() => loadConfig({ SABNZBD_URL: 'not-a-url' })).toThrow('SABNZBD_URL must be a URL');
+  });
+
   it('validates indexer upload configuration', () => {
     expect(() => loadConfig({ INDEXER_UPLOADS_JSON: 'not-json' })).toThrow('INDEXER_UPLOADS_JSON must be valid JSON');
     expect(() =>

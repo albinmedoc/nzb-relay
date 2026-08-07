@@ -4,11 +4,15 @@ import type { AppDatabase } from '../src/db/client.js';
 import {
   claimFile,
   enqueueIndexerUploads,
+  enqueueSabnzbdPush,
   getFile,
+  getSabnzbdPushForNzb,
   insertFile,
   insertNzb,
   listIndexerUploadsForNzb,
+  nextDueSabnzbdPush,
   recoverFileInterrupted,
+  retryFailedSabnzbdPush,
   transitionFileCompleted,
   transitionFileFailed
 } from '../src/db/repository.js';
@@ -87,6 +91,110 @@ describe('database invariants', () => {
     expect(listIndexerUploadsForNzb(db, nzb.id)).toEqual([]);
   });
 
+  it('queues SABnzbd pushes idempotently with fallback category', () => {
+    config = testConfig(dataDir, {
+      SABNZBD_URL: 'http://sabnzbd:8080/api',
+      SABNZBD_CATEGORY: 'manual'
+    });
+    db.close();
+    db = createTestDb(config);
+    const file = insertFile(db, fileInput('https://example.test/sab-push'));
+    db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+      '2026-05-05T00:00:00.000Z',
+      file.id
+    );
+    const nzb = insertNzb(db, { releaseName: 'Title.s01e01.svtplay', fileIds: [file.id] });
+
+    expect(enqueueSabnzbdPush(db, config, nzb)).toBe(true);
+    expect(enqueueSabnzbdPush(db, config, nzb)).toBe(false);
+    expect(getSabnzbdPushForNzb(db, nzb.id)).toMatchObject({
+      url: 'http://sabnzbd:8080/api',
+      category: 'manual',
+      status: 'pending'
+    });
+    expect(nextDueSabnzbdPush(db)).toMatchObject({ nzbId: nzb.id });
+
+    db.prepare('DELETE FROM nzb WHERE id = ?').run(nzb.id);
+
+    expect(getSabnzbdPushForNzb(db, nzb.id)).toBeNull();
+  });
+
+  it('resolves SABnzbd push categories for movies and watchlist series', () => {
+    config = testConfig(dataDir, {
+      SABNZBD_URL: 'http://sabnzbd:8080/api',
+      SABNZBD_MOVIE_CATEGORY: 'films',
+      SABNZBD_SERIES_CATEGORY: 'shows'
+    });
+    db.close();
+    db = createTestDb(config);
+
+    const movieNzb = completedNzb('https://example.test/movie', 'Movie.Title');
+    db.prepare(
+      `
+        INSERT INTO movie_job (
+          id, url, title, service, quality, status, fileId, nzbId,
+          downloadAttempts, nzbAttempts, downloadQueuedAt, downloadedAt, nzbQueuedAt, postedAt,
+          lastErrorCode, lastError, createdAt, updatedAt
+        )
+        VALUES ('movie-1', 'https://example.test/movie', 'Movie', 'svtplay', '1080', 'nzb_queued', NULL, ?,
+          0, 0, NULL, NULL, NULL, NULL, NULL, NULL, '2026-05-05T00:00:00.000Z', '2026-05-05T00:00:00.000Z')
+      `
+    ).run(movieNzb.id);
+
+    const seriesNzb = completedNzb('https://example.test/series', 'Series.Title');
+    db.prepare(
+      `
+        INSERT INTO watchlist_source (
+          id, service, type, url, title, enabled, backfill, deleteFileAfterNzb,
+          firstScanCompleted, lastScannedAt, nextScanAt, lastErrorCode, lastError, createdAt, updatedAt
+        )
+        VALUES ('source-1', 'svtplay', 'series', 'https://example.test/source', 'Series', 1, 1, 1,
+          0, NULL, NULL, NULL, NULL, '2026-05-05T00:00:00.000Z', '2026-05-05T00:00:00.000Z')
+      `
+    ).run();
+    db.prepare(
+      `
+        INSERT INTO watchlist_episode (
+          id, sourceId, url, season, episode, title, quality, status, fileId, nzbId,
+          downloadAttempts, nzbAttempts, downloadQueuedAt, downloadedAt, nzbQueuedAt, postedAt,
+          lastErrorCode, lastError, createdAt, updatedAt
+        )
+        VALUES ('episode-1', 'source-1', 'https://example.test/series', 1, 1, 'Episode', '1080', 'nzb_queued', NULL, ?,
+          0, 0, NULL, NULL, NULL, NULL, NULL, NULL, '2026-05-05T00:00:00.000Z', '2026-05-05T00:00:00.000Z')
+      `
+    ).run(seriesNzb.id);
+
+    enqueueSabnzbdPush(db, config, movieNzb);
+    enqueueSabnzbdPush(db, config, seriesNzb);
+
+    expect(getSabnzbdPushForNzb(db, movieNzb.id)?.category).toBe('films');
+    expect(getSabnzbdPushForNzb(db, seriesNzb.id)?.category).toBe('shows');
+  });
+
+  it('retries failed SABnzbd pushes by resetting the same row', () => {
+    config = testConfig(dataDir, {
+      SABNZBD_URL: 'http://sabnzbd:8080/api'
+    });
+    db.close();
+    db = createTestDb(config);
+    const nzb = completedNzb('https://example.test/sab-retry', 'Retry.Title');
+    enqueueSabnzbdPush(db, config, nzb);
+    db.prepare(
+      "UPDATE sabnzbd_push SET status = 'failed', attempts = 2, lastError = 'down', remoteIds = ?, pushedAt = ? WHERE nzbId = ?"
+    ).run('["old"]', '2026-05-05T01:00:00.000Z', nzb.id);
+
+    expect(retryFailedSabnzbdPush(db, nzb.id, '2026-05-05T02:00:00.000Z')).toBe(true);
+
+    expect(getSabnzbdPushForNzb(db, nzb.id)).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: '2026-05-05T02:00:00.000Z',
+      lastError: null,
+      remoteIds: null,
+      pushedAt: null
+    });
+  });
+
   it('recovers deleted running files without enqueueing a webhook', () => {
     const row = insertFile(db, fileInput('https://example.test/deleted-running'));
     expect(claimFile(db, row.id)).toBe(true);
@@ -102,6 +210,17 @@ describe('database invariants', () => {
     expect((db.prepare('SELECT COUNT(*) AS count FROM webhook_deliveries').get() as { count: number }).count).toBe(0);
   });
 });
+
+function completedNzb(url: string, releaseName: string) {
+  const file = insertFile(db, fileInput(url));
+  db.prepare("UPDATE file SET status = 'completed', downloadedAt = ? WHERE id = ?").run(
+    '2026-05-05T00:00:00.000Z',
+    file.id
+  );
+  const nzb = insertNzb(db, { releaseName, fileIds: [file.id] });
+  db.prepare("UPDATE nzb SET status = 'completed', postedAt = ? WHERE id = ?").run('2026-05-05T00:10:00.000Z', nzb.id);
+  return db.prepare('SELECT * FROM nzb WHERE id = ?').get(nzb.id) as typeof nzb;
+}
 
 function fileInput(url: string) {
   return {
