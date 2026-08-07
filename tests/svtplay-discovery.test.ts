@@ -226,19 +226,39 @@ describe('svtplay discovery', () => {
     ]);
   });
 
-  it('parses movie titles from SVT page data and selects the highest quality', async () => {
+  it('uses document titles as the primary movie title source and selects the highest quality', async () => {
     const result = await parseSvtMoviePageHtml(
-      moviePageData('https://www.svtplay.se/video/movie/test', 'My Movie'),
+      moviePageData('https://www.svtplay.se/video/movie/test', 'Embedded Metadata Title', 'Document Title – Document Title | SVT Play'),
       'https://www.svtplay.se/video/movie/test?foo=bar',
       async () => ['1080', '720']
     );
 
     expect(result).toEqual({
       url: 'https://www.svtplay.se/video/movie/test',
-      title: 'My Movie',
+      title: 'Document Title',
       service: 'svtplay',
       quality: '1080'
     });
+  });
+
+  it('uses document titles for movie pages without SVT page data', async () => {
+    const probedUrls: string[] = [];
+    const result = await parseSvtMoviePageHtml(
+      '<html><head><title data-next-head="">Toy Story 3 – Toy Story 3 | SVT Play</title></head></html>',
+      'https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2?video=visa',
+      async (url) => {
+        probedUrls.push(url);
+        return ['1080', '720'];
+      }
+    );
+
+    expect(result).toEqual({
+      url: 'https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2',
+      title: 'Toy Story 3',
+      service: 'svtplay',
+      quality: '1080'
+    });
+    expect(probedUrls).toEqual(['https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2']);
   });
 
   it('parses resolution heights from svtplay-dl quality output', () => {
@@ -349,7 +369,7 @@ function pageData(link: string, modules: TestPageModule[]): string {
   return `<html><script>URQL_DATA = ${JSON.stringify(urqlData)};</script></html>`;
 }
 
-function moviePageData(link: string, title: string): string {
+function moviePageData(link: string, title: string, documentTitle?: string): string {
   const urqlData = {
     cache: {
       hasNext: false,
@@ -378,7 +398,7 @@ function moviePageData(link: string, title: string): string {
     }
   };
 
-  return `<html><script>URQL_DATA = ${JSON.stringify(urqlData)};</script></html>`;
+  return `<html><head>${documentTitle ? `<title data-next-head="">${documentTitle}</title>` : ''}</head><script>URQL_DATA = ${JSON.stringify(urqlData)};</script></html>`;
 }
 
 function seasonModule(season: number, items: TestPageItem[]): TestPageModule {

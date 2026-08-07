@@ -108,6 +108,9 @@ Status codes:
 - `400 missing_required_param`
 - `400 malformed_url`
 - `400 unsupported_movie_url`
+- `404 movie_not_found`
+- `502 svt_unavailable`
+- `502 movie_quality_probe_failed`
 - `502 movie_discovery_failed`
 - `409 duplicate_url`
 

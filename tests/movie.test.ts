@@ -101,6 +101,38 @@ describe('movie API', () => {
     expect(await response.json()).toMatchObject({ code: 'unsupported_movie_url' });
   });
 
+  it('returns movie_not_found when discovery cannot find or parse the movie page', async () => {
+    const appWithMissingMovie = createTestApp(db, config, undefined, {
+      async fetchMovie() {
+        throw new Error('SVT Play movie not found');
+      }
+    });
+
+    const response = await createMovie('https://www.svtplay.se/video/missing', appWithMissingMovie);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      code: 'movie_not_found',
+      error: 'movie not found'
+    });
+  });
+
+  it('returns movie_quality_probe_failed when svtplay-dl cannot resolve qualities', async () => {
+    const appWithFailedProbe = createTestApp(db, config, undefined, {
+      async fetchMovie() {
+        throw new Error('svtplay-dl quality probe returned no qualities for https://www.svtplay.se/video/test');
+      }
+    });
+
+    const response = await createMovie('https://www.svtplay.se/video/test', appWithFailedProbe);
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      code: 'movie_quality_probe_failed',
+      error: 'movie quality probe failed'
+    });
+  });
+
   it('retries a failed movie download with a fresh file row', async () => {
     const created = await createMovie('https://www.svtplay.se/video/retry');
     const body = (await created.json()) as { movieId: string; fileId: string };
@@ -172,8 +204,8 @@ describe('movie worker', () => {
   });
 });
 
-function createMovie(url: string): Promise<Response> {
-  return app.request('/v1/movies', {
+function createMovie(url: string, targetApp: ReturnType<typeof createTestApp> = app): Promise<Response> {
+  return targetApp.request('/v1/movies', {
     method: 'POST',
     headers: {
       authorization: 'Bearer secret',

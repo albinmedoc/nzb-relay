@@ -704,18 +704,18 @@ export async function parseSvtMoviePageHtml(
   logger?: Logger
 ): Promise<SvtMovieResponse | null> {
   const detailsPage = extractDetailsPage(html);
-  if (!detailsPage) {
-    return null;
-  }
 
   const canonicalUrl =
-    normalizeSvtMovieUrl(absoluteSvtUrl(firstText(getPath(detailsPage, ['item', 'urls', 'svtplay']))) || url) || url;
+    normalizeSvtMovieUrl(
+      absoluteSvtUrl(firstText(detailsPage ? getPath(detailsPage, ['item', 'urls', 'svtplay']) : undefined)) || url
+    ) || url;
   const title =
     firstText(
-      getPath(detailsPage, ['item', 'name']),
-      getPath(detailsPage, ['details', 'heading']),
-      getPath(detailsPage, ['analytics', 'json', 'title']),
-      getPath(detailsPage, ['item', 'parent', 'name'])
+      extractDocumentTitle(html),
+      detailsPage ? getPath(detailsPage, ['item', 'name']) : undefined,
+      detailsPage ? getPath(detailsPage, ['details', 'heading']) : undefined,
+      detailsPage ? getPath(detailsPage, ['analytics', 'json', 'title']) : undefined,
+      detailsPage ? getPath(detailsPage, ['item', 'parent', 'name']) : undefined
     ) || humanizeSlug(canonicalUrl);
 
   logger?.info({ event: 'svt.movie.discovery.started', url: canonicalUrl }, 'SVT movie discovery started');
@@ -773,6 +773,31 @@ function extractDetailsPage(html: string): Record<string, unknown> | null {
   }
 
   return null;
+}
+
+function extractDocumentTitle(html: string): string {
+  const match = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (!match?.[1]) {
+    return '';
+  }
+
+  return (
+    decodeHtmlEntities(match[1])
+      .replace(/\s*\|\s*SVT Play\s*$/i, '')
+      .replace(/^SVT Play\s*[-–]\s*/i, '')
+      .split(/\s+[–-]\s+/)[0]
+      ?.trim() ?? ''
+  );
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
 }
 
 function extractAssignedObject(source: string, name: string): string | null {

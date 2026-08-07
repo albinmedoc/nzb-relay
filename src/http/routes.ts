@@ -213,11 +213,13 @@ export function createApp({
       }
       return c.json({ movieId: row.id, fileId: row.fileId!, status: row.status } satisfies CreateMovieResponse, 202);
     } catch (error) {
-      if (error instanceof Error && error.message === 'unsupported SVT Play movie URL') {
-        return errorResponse(c, 400, 'unsupported_movie_url', 'movie URL is not supported');
-      }
       if (isSqliteUniqueConstraint(error)) {
         return errorResponse(c, 409, 'duplicate_url', 'active download already exists for url');
+      }
+      const discoveryError = classifyMovieDiscoveryError(error);
+      if (discoveryError) {
+        logger.warn({ error, code: discoveryError.code }, 'failed to discover movie');
+        return errorResponse(c, discoveryError.status, discoveryError.code, discoveryError.error);
       }
       logger.warn({ error }, 'failed to discover movie');
       return errorResponse(c, 502, 'movie_discovery_failed', 'movie discovery failed');
@@ -895,6 +897,27 @@ function validateMovieBody(body: Record<string, unknown>):
       url: validation.data.url
     }
   };
+}
+
+function classifyMovieDiscoveryError(error: unknown): { status: number; code: string; error: string } | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  if (error.message === 'unsupported SVT Play movie URL') {
+    return { status: 400, code: 'unsupported_movie_url', error: 'movie URL is not supported' };
+  }
+  if (error.message === 'SVT Play movie not found') {
+    return { status: 404, code: 'movie_not_found', error: 'movie not found' };
+  }
+  if (error.message.startsWith('SVT returned HTTP ')) {
+    return { status: 502, code: 'svt_unavailable', error: 'SVT discovery failed' };
+  }
+  if (error.message.includes('svtplay-dl')) {
+    return { status: 502, code: 'movie_quality_probe_failed', error: 'movie quality probe failed' };
+  }
+
+  return null;
 }
 
 function validateWatchlistBody(body: Record<string, unknown>):
