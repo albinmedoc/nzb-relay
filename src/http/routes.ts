@@ -218,10 +218,10 @@ export function createApp({
       }
       const discoveryError = classifyMovieDiscoveryError(error);
       if (discoveryError) {
-        logger.warn({ error, code: discoveryError.code }, 'failed to discover movie');
+        logger.warn({ error, errorMessage: describeError(error), code: discoveryError.code }, 'failed to discover movie');
         return errorResponse(c, discoveryError.status, discoveryError.code, discoveryError.error);
       }
-      logger.warn({ error }, 'failed to discover movie');
+      logger.warn({ error, errorMessage: describeError(error) }, 'failed to discover movie');
       return errorResponse(c, 502, 'movie_discovery_failed', 'movie discovery failed');
     }
   });
@@ -918,6 +918,10 @@ function classifyMovieDiscoveryError(error: unknown): { status: number; code: st
   }
 
   return null;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function validateWatchlistBody(body: Record<string, unknown>):

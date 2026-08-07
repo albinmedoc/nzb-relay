@@ -448,7 +448,6 @@ export function normalizeSvtMovieUrl(rawUrl: string): string | null {
 
     url.protocol = 'https:';
     url.hash = '';
-    url.search = '';
     return url.toString();
   } catch {
     return null;
@@ -704,11 +703,12 @@ export async function parseSvtMoviePageHtml(
   logger?: Logger
 ): Promise<SvtMovieResponse | null> {
   const detailsPage = extractDetailsPage(html);
+  const inputUrl = normalizeSvtMovieUrl(url) || url;
+  const detailsUrl = normalizeSvtMovieUrl(
+    absoluteSvtUrl(firstText(detailsPage ? getPath(detailsPage, ['item', 'urls', 'svtplay']) : undefined)) || ''
+  );
 
-  const canonicalUrl =
-    normalizeSvtMovieUrl(
-      absoluteSvtUrl(firstText(detailsPage ? getPath(detailsPage, ['item', 'urls', 'svtplay']) : undefined)) || url
-    ) || url;
+  const canonicalUrl = hasUrlSearch(inputUrl) ? inputUrl : detailsUrl || inputUrl;
   const title =
     firstText(
       extractDocumentTitle(html),
@@ -798,6 +798,14 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'");
+}
+
+function hasUrlSearch(value: string): boolean {
+  try {
+    return new URL(value).search.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function extractAssignedObject(source: string, name: string): string | null {

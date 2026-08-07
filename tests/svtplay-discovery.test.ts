@@ -234,7 +234,7 @@ describe('svtplay discovery', () => {
     );
 
     expect(result).toEqual({
-      url: 'https://www.svtplay.se/video/movie/test',
+      url: 'https://www.svtplay.se/video/movie/test?foo=bar',
       title: 'Document Title',
       service: 'svtplay',
       quality: '1080'
@@ -253,12 +253,12 @@ describe('svtplay discovery', () => {
     );
 
     expect(result).toEqual({
-      url: 'https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2',
+      url: 'https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2?video=visa',
       title: 'Toy Story 3',
       service: 'svtplay',
       quality: '1080'
     });
-    expect(probedUrls).toEqual(['https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2']);
+    expect(probedUrls).toEqual(['https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2?video=visa']);
   });
 
   it('parses resolution heights from svtplay-dl quality output', () => {
