@@ -11,6 +11,7 @@ import {
   normalizeCodecName,
   normalizeMpegTsPackets,
   parseFfprobeCodecs,
+  prepareMediaInputsForMux,
   removeDownloadSidecars,
   subtitleLanguageFromPath,
   subtitleTextForLanguageDetection
@@ -293,8 +294,49 @@ describe('download worker', () => {
       mpegTsPacket(0x30)
     ]));
   });
+
+  it('does not force MPEG-TS muxing for CMAF/MP4 content with a .ts extension', async () => {
+    const inputPath = path.join(dataDir, 'Title.svtplay.audio.ts');
+    const logStream = { write: vi.fn() };
+    await fs.writeFile(inputPath, mp4Header());
+
+    const prepared = await prepareMediaInputsForMux([inputPath], logStream);
+
+    expect(prepared).toEqual([path.join(dataDir, 'Title.svtplay.audio.nzb-relay.mp4')]);
+    expect(await fs.readFile(prepared[0]!)).toEqual(mp4Header());
+    expect(buildFfmpegDownloadMuxArgs(prepared, [], path.join(dataDir, 'Title.svtplay.muxing.mkv'), [])).toEqual([
+      '-y',
+      '-i',
+      path.join(dataDir, 'Title.svtplay.audio.nzb-relay.mp4'),
+      '-map',
+      '0:a?',
+      '-map_metadata',
+      '0',
+      '-map_chapters',
+      '0',
+      '-c',
+      'copy',
+      '-c:s',
+      'srt',
+      path.join(dataDir, 'Title.svtplay.muxing.mkv')
+    ]);
+    expect(logStream.write).toHaveBeenCalledWith(
+      'using non-MPEG-TS media artifact Title.svtplay.audio.ts as Title.svtplay.audio.nzb-relay.mp4\n'
+    );
+  });
 });
 
 function mpegTsPacket(fill: number): Buffer {
   return Buffer.concat([Buffer.from([0x47]), Buffer.alloc(187, fill)]);
+}
+
+function mp4Header(): Buffer {
+  return Buffer.from([
+    0x00, 0x00, 0x00, 0x18,
+    0x66, 0x74, 0x79, 0x70,
+    0x69, 0x73, 0x6f, 0x6d,
+    0x00, 0x00, 0x02, 0x00,
+    0x69, 0x73, 0x6f, 0x6d,
+    0x69, 0x73, 0x6f, 0x32
+  ]);
 }

@@ -567,7 +567,7 @@ export const buildFfmpegSubtitleMuxArgs = (
 ): string[] => buildFfmpegDownloadMuxArgs([mediaPath], subtitlePaths, outputPath, languages);
 
 function isLikelyAudioOnlyArtifact(filePath: string): boolean {
-  return /\.audio\.[^.]+$/i.test(path.basename(filePath));
+  return /\.audio(?:\.nzb-relay)?\.[^.]+$/i.test(path.basename(filePath));
 }
 
 async function detectSubtitleLanguages(
@@ -634,7 +634,7 @@ export async function downloadedMediaCandidates(config: Config, row: FileRow): P
     .sort((left, right) => mediaArtifactSortKey(left).localeCompare(mediaArtifactSortKey(right)));
 }
 
-async function prepareMediaInputsForMux(
+export async function prepareMediaInputsForMux(
   mediaInputs: string[],
   logStream: Pick<fs.WriteStream, 'write'>,
   signal?: AbortSignal
@@ -643,6 +643,14 @@ async function prepareMediaInputsForMux(
   for (const mediaInput of mediaInputs) {
     if (!/\.ts$/i.test(mediaInput)) {
       prepared.push(mediaInput);
+      continue;
+    }
+
+    if (!(await isMpegTsFile(mediaInput))) {
+      const aliasPath = nonMpegTsAliasPath(mediaInput);
+      await linkOrCopyFile(mediaInput, aliasPath);
+      prepared.push(aliasPath);
+      logStream.write(`using non-MPEG-TS media artifact ${path.basename(mediaInput)} as ${path.basename(aliasPath)}\n`);
       continue;
     }
 
@@ -659,6 +667,30 @@ async function prepareMediaInputsForMux(
 
 function normalizedTsPath(filePath: string): string {
   return filePath.replace(/\.ts$/i, '.normalized.ts');
+}
+
+function nonMpegTsAliasPath(filePath: string): string {
+  return filePath.replace(/\.ts$/i, '.nzb-relay.mp4');
+}
+
+async function isMpegTsFile(filePath: string): Promise<boolean> {
+  const handle = await fsp.open(filePath, 'r');
+  try {
+    const buffer = Buffer.allocUnsafe(408);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return detectMpegTsPacket(buffer.subarray(0, bytesRead), 0) !== null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function linkOrCopyFile(fromPath: string, toPath: string): Promise<void> {
+  await fsp.rm(toPath, { force: true });
+  try {
+    await fsp.link(fromPath, toPath);
+  } catch {
+    await fsp.copyFile(fromPath, toPath);
+  }
 }
 
 interface MpegTsNormalizeStats {
