@@ -12,6 +12,7 @@ interface RunLoggedProcessOptions {
   signal?: AbortSignal;
   logger: Logger;
   onChild?: (child: ChildProcess) => void;
+  idleTimeoutMs?: number;
 }
 
 export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<ChildProcessResult> {
@@ -21,6 +22,8 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
     let lastStderrLine: string | null = null;
     let settled = false;
     let killTimer: NodeJS.Timeout | null = null;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let idleTimeoutError: Error | null = null;
 
     const settle = (result: ChildProcessResult) => {
       if (settled) {
@@ -29,6 +32,9 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
       settled = true;
       if (killTimer) {
         clearTimeout(killTimer);
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
       }
       resolve(result);
     };
@@ -71,6 +77,7 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
       if (streamName === 'stderr') {
         lastStderrLine = line;
       }
+      resetIdleTimer();
       options.logStream.write(`${line}\n`);
     };
 
@@ -92,6 +99,25 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
         }
       }, 1000);
     };
+
+    const resetIdleTimer = () => {
+      if (!options.idleTimeoutMs) {
+        return;
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+      idleTimer = setTimeout(() => {
+        idleTimeoutError = new Error(`${options.command} produced no output for ${options.idleTimeoutMs}ms`);
+        options.logger.warn(
+          { event: 'child.idle_timeout', command: options.command, idleTimeoutMs: options.idleTimeoutMs },
+          'child process idle timeout'
+        );
+        terminate();
+      }, options.idleTimeoutMs);
+    };
+
+    resetIdleTimer();
 
     if (options.signal?.aborted) {
       terminate();
@@ -122,7 +148,7 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
         signal,
         lastLine,
         lastStderrLine,
-        error: null
+        error: idleTimeoutError
       });
     });
   });
@@ -130,7 +156,7 @@ export function runLoggedProcess(options: RunLoggedProcessOptions): Promise<Chil
 
 export function childFailureSummary(tool: string, result: ChildProcessResult): string {
   if (result.error) {
-    return truncateOneLine(`${tool} failed to start: ${result.error.message}`);
+    return truncateOneLine(`${tool} failed: ${result.error.message}`);
   }
   if (result.signal) {
     return truncateOneLine(`${tool} exited by signal ${result.signal}: ${result.lastStderrLine ?? result.lastLine ?? 'no output'}`);

@@ -23,6 +23,7 @@ import { sleep } from '../utils/time.js';
 import type { ErrorCode, NzbFileSummary, NzbRow } from '../types.js';
 
 type RandomInt = (maxExclusive: number) => number;
+const NYUU_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface ActiveNzb {
   id: string;
@@ -230,6 +231,7 @@ export class NzbWorker {
       logStream,
       signal: controller.signal,
       logger: this.logger,
+      idleTimeoutMs: command === 'nyuu' ? NYUU_IDLE_TIMEOUT_MS : undefined,
       onChild: (child) => {
         if (this.active?.id === row.id) {
           this.active.child = child;
