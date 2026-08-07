@@ -23,7 +23,7 @@ FROM node:${NODE_VERSION}-slim AS backend
 WORKDIR /app
 ARG VERSION=0.0.0
 # renovate: datasource=pypi depName=svtplay-dl
-ARG SVTPLAY_DL_VERSION=4.179
+ARG SVTPLAY_DL_VERSION=4.191
 RUN set -eux; \
   apt-get update; \
   apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 python3-pip make g++; \

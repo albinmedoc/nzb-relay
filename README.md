@@ -41,7 +41,7 @@ The backend Docker image pins Node.js and `svtplay-dl` at build time. To build w
 ```sh
 docker build \
   --build-arg NODE_VERSION=20.20.2 \
-  --build-arg SVTPLAY_DL_VERSION=4.179 \
+  --build-arg SVTPLAY_DL_VERSION=4.191 \
   -t nzb-relay .
 ```
 

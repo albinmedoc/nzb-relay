@@ -229,12 +229,12 @@ describe('svtplay discovery', () => {
   it('uses document titles as the primary movie title source and selects the highest quality', async () => {
     const result = await parseSvtMoviePageHtml(
       moviePageData('https://www.svtplay.se/video/movie/test', 'Embedded Metadata Title', 'Document Title – Document Title | SVT Play'),
-      'https://www.svtplay.se/video/movie/test?foo=bar',
+      'https://www.svtplay.se/video/movie/test',
       async () => ['1080', '720']
     );
 
     expect(result).toEqual({
-      url: 'https://www.svtplay.se/video/movie/test?foo=bar',
+      url: 'https://www.svtplay.se/video/movie/test?video=visa',
       title: 'Document Title',
       service: 'svtplay',
       quality: '1080'
@@ -259,6 +259,21 @@ describe('svtplay discovery', () => {
       quality: '1080'
     });
     expect(probedUrls).toEqual(['https://www.svtplay.se/video/j16GErk/toy-story-2/toy-story-2?video=visa']);
+  });
+
+  it('adds the SVT playback query to movie URLs without query parameters', async () => {
+    const probedUrls: string[] = [];
+    const result = await parseSvtMoviePageHtml(
+      '<html><head><title data-next-head="">Toy Story 3 – Toy Story 3 | SVT Play</title></head></html>',
+      'https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3',
+      async (url) => {
+        probedUrls.push(url);
+        return ['1080', '720'];
+      }
+    );
+
+    expect(result?.url).toBe('https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3?video=visa');
+    expect(probedUrls).toEqual(['https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3?video=visa']);
   });
 
   it('parses resolution heights from svtplay-dl quality output', () => {

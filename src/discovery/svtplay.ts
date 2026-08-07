@@ -448,6 +448,9 @@ export function normalizeSvtMovieUrl(rawUrl: string): string | null {
 
     url.protocol = 'https:';
     url.hash = '';
+    if (!url.search) {
+      url.searchParams.set('video', 'visa');
+    }
     return url.toString();
   } catch {
     return null;
