@@ -913,9 +913,6 @@ function classifyMovieDiscoveryError(error: unknown): { status: number; code: st
   if (error.message.startsWith('SVT returned HTTP ')) {
     return { status: 502, code: 'svt_unavailable', error: 'SVT discovery failed' };
   }
-  if (error.message.includes('svtplay-dl')) {
-    return { status: 502, code: 'movie_quality_probe_failed', error: 'movie quality probe failed' };
-  }
 
   return null;
 }

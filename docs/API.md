@@ -78,6 +78,7 @@ Status codes:
 
 Movies are one-shot jobs. They create a normal download immediately, then automatically queue one NZB after that download completes. Movie jobs do not create watchlist sources or episodes, and downloaded movie files are kept after NZB posting.
 Movie creation only accepts an SVT Play video URL; the server parses the title and picks the best available quality.
+If quality probing is unavailable, movie creation falls back to `1080` and lets the download worker attempt the actual download.
 
 ### `POST /v1/movies`
 
@@ -110,7 +111,6 @@ Status codes:
 - `400 unsupported_movie_url`
 - `404 movie_not_found`
 - `502 svt_unavailable`
-- `502 movie_quality_probe_failed`
 - `502 movie_discovery_failed`
 - `409 duplicate_url`
 

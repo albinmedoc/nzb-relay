@@ -7,6 +7,7 @@ import { commandLine } from '../utils/child.js';
 const SVT_BASE_URL = 'https://www.svtplay.se';
 const QUALITY_PROBE_TIMEOUT_MS = 60_000;
 const DEFAULT_QUALITY_PROBE_CONCURRENCY = 4;
+const DEFAULT_MOVIE_QUALITY = '1080';
 
 export interface SvtEpisode {
   episode: number;
@@ -722,11 +723,7 @@ export async function parseSvtMoviePageHtml(
     ) || humanizeSlug(canonicalUrl);
 
   logger?.info({ event: 'svt.movie.discovery.started', url: canonicalUrl }, 'SVT movie discovery started');
-  const qualities = await qualityProbe(canonicalUrl);
-  const quality = qualities[0];
-  if (!quality) {
-    throw new Error(`svtplay-dl quality probe returned no qualities for ${canonicalUrl}`);
-  }
+  const quality = await resolveMovieQuality(canonicalUrl, qualityProbe, logger);
 
   logger?.info(
     {
@@ -744,6 +741,26 @@ export async function parseSvtMoviePageHtml(
     service: 'svtplay',
     quality
   };
+}
+
+async function resolveMovieQuality(url: string, qualityProbe: QualityProbe, logger?: Logger): Promise<string> {
+  try {
+    const qualities = await qualityProbe(url);
+    const quality = qualities[0];
+    if (quality) {
+      return quality;
+    }
+    logger?.warn(
+      { event: 'svt.movie.quality_probe.empty', url, fallbackQuality: DEFAULT_MOVIE_QUALITY },
+      'SVT movie quality probe returned no qualities'
+    );
+  } catch (error) {
+    logger?.warn(
+      { event: 'svt.movie.quality_probe.failed', url, error, errorMessage: describeError(error), fallbackQuality: DEFAULT_MOVIE_QUALITY },
+      'SVT movie quality probe failed'
+    );
+  }
+  return DEFAULT_MOVIE_QUALITY;
 }
 
 function countEpisodes(response: SvtSerieResponse): number {
@@ -1115,4 +1132,8 @@ function readPositiveInteger(value: unknown): number | null {
 
 function truncateOneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 200) || 'no output';
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

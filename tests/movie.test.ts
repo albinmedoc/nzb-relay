@@ -117,19 +117,19 @@ describe('movie API', () => {
     });
   });
 
-  it('returns movie_quality_probe_failed when svtplay-dl cannot resolve qualities', async () => {
-    const appWithFailedProbe = createTestApp(db, config, undefined, {
+  it('returns movie_discovery_failed for unexpected discovery failures', async () => {
+    const appWithFailedDiscovery = createTestApp(db, config, undefined, {
       async fetchMovie() {
-        throw new Error('svtplay-dl quality probe returned no qualities for https://www.svtplay.se/video/test');
+        throw new Error('unexpected discovery failure');
       }
     });
 
-    const response = await createMovie('https://www.svtplay.se/video/test', appWithFailedProbe);
+    const response = await createMovie('https://www.svtplay.se/video/test', appWithFailedDiscovery);
 
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({
-      code: 'movie_quality_probe_failed',
-      error: 'movie quality probe failed'
+      code: 'movie_discovery_failed',
+      error: 'movie discovery failed'
     });
   });
 

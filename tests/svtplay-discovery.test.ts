@@ -276,6 +276,32 @@ describe('svtplay discovery', () => {
     expect(probedUrls).toEqual(['https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3?video=visa']);
   });
 
+  it('falls back to 1080 when movie quality probing fails', async () => {
+    const result = await parseSvtMoviePageHtml(
+      '<html><head><title data-next-head="">Toy Story 3 – Toy Story 3 | SVT Play</title></head></html>',
+      'https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3',
+      async () => {
+        throw new Error('svtplay-dl quality probe returned no qualities: ERROR: No videos found.');
+      }
+    );
+
+    expect(result).toMatchObject({
+      url: 'https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3?video=visa',
+      title: 'Toy Story 3',
+      quality: '1080'
+    });
+  });
+
+  it('falls back to 1080 when movie quality probing returns no qualities', async () => {
+    const result = await parseSvtMoviePageHtml(
+      '<html><head><title data-next-head="">Toy Story 3 – Toy Story 3 | SVT Play</title></head></html>',
+      'https://www.svtplay.se/video/ePvVERQ/toy-story-3/toy-story-3',
+      async () => []
+    );
+
+    expect(result?.quality).toBe('1080');
+  });
+
   it('parses resolution heights from svtplay-dl quality output', () => {
     expect(
       parseSvtplayDlQualities(`
